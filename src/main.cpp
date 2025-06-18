@@ -1,4 +1,3 @@
-#include <iostream>
 #define NS_PRIVATE_IMPLEMENTATION
 #define CA_PRIVATE_IMPLEMENTATION
 #define MTL_PRIVATE_IMPLEMENTATION
@@ -22,10 +21,10 @@ int main(int argc, char *argv[]) {
     
     // Create Metal device and renderer
     MTL::Device* device = MTL::CreateSystemDefaultDevice();
-    Renderer* renderer = new Renderer(device);
+    auto* renderer = new Renderer(device);
     
     // Cast the layer to CA::MetalLayer and render
-    CA::MetalLayer* layer = static_cast<CA::MetalLayer*>(metalLayer);
+    auto* layer = static_cast<CA::MetalLayer*>(metalLayer);
     renderer->draw(layer);
     
     // Show window and run app
