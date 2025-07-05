@@ -1,10 +1,16 @@
 #include "Renderer.h"
+
+#include <iostream>
+
 #include "Config.h"
+#include <vector>
+#include <simd/simd.h>
 
 Renderer::Renderer(MTL::Device *device) : _device(device) {
     _cmdQueue = _device->newCommandQueue();
     setupPipeline();
     setupTexture();
+    setupScene();
 }
 
 void Renderer::setupPipeline() {
@@ -61,6 +67,16 @@ void Renderer::draw(CA::MetalLayer *layer) {
     encoder->setTexture(_outputTexture, 0);
     encoder->setBytes(&_frameIndex, sizeof(_frameIndex), 0);
 
+    // bind triangles
+    encoder->setBuffer(_triangleBuffer, 0, 1);
+    encoder->setBytes(&_triangleCount, sizeof(_triangleCount), 2);
+    // bind planes
+    encoder->setBuffer(_planeBuffer, 0, 3);
+    encoder->setBytes(&_planeCount, sizeof(_planeCount), 4);
+    // bind spheres
+    encoder->setBuffer(_sphereBuffer, 0, 5);
+    encoder->setBytes(&_sphereCount, sizeof(_sphereCount), 6);
+
     MTL::Size threadsPerThreadgroup(8,8,1);
     MTL::Size grid(WINDOW_WIDTH, WINDOW_HEIGHT,1);
     MTL::Size threadgroups(
@@ -92,4 +108,48 @@ void Renderer::draw(CA::MetalLayer *layer) {
     cmdBuf->commit();
 
     _frameIndex++;
+}
+
+void Renderer::setupScene() {
+    struct CPU_Tri {
+        simd::float3 v0;
+        simd::float3 v1;
+        simd::float3 v2;
+    };
+    struct CPU_Pln {
+            simd::float3 normal;
+            float d;
+    };
+
+    struct CPU_Sph {
+        simd::float3 center;
+        float radius;
+    };
+
+    const std::vector<CPU_Tri> tris = {
+        { { -0.5, 0.0, -1.0 }, { 0.5, 0.0, -1.0 }, { 0.0, 1.0, -1.0 } }
+    };
+    const std::vector<CPU_Pln> plns = {
+        { {0,1,0}, 1.0f }   // plane y = -1 (n=(0,1,0), d=+1)
+    };
+
+    std::vector<CPU_Sph> sphs = {
+        {{1.0f, 0.5f, -2.0f}, 0.5f}
+    };
+
+    _triangleCount = static_cast<uint32_t>(tris.size());
+    _planeCount    = static_cast<uint32_t>(plns.size());
+    _sphereCount   = static_cast<uint32_t>(sphs.size());
+
+    _triangleBuffer = _device->newBuffer(tris.size()*sizeof(CPU_Tri),
+                                         MTL::ResourceStorageModeShared);
+    memcpy(_triangleBuffer->contents(), tris.data(), tris.size()*sizeof(CPU_Tri));
+
+    _planeBuffer = _device->newBuffer(plns.size()*sizeof(CPU_Pln),
+                                      MTL::ResourceStorageModeShared);
+    memcpy(_planeBuffer->contents(), plns.data(), plns.size()*sizeof(CPU_Pln));
+
+    _sphereBuffer = _device->newBuffer(sphs.size()*sizeof(CPU_Sph),
+                                      MTL::ResourceStorageModeShared);
+    memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size()*sizeof(CPU_Sph));
 }

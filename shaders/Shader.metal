@@ -1,79 +1,153 @@
 #include <metal_stdlib>
 using namespace metal;
 
+struct SceneTriangle {
+    float3 v0;
+    float3 v1;
+    float3 v2;
+};
+
+struct ScenePlane {
+    float3 normal;
+    float  d;
+};
+
+struct SceneSphere {
+    float3 center;
+    float  radius;
+};
+
 struct Ray {
     float3 origin;
     float3 dir;
 };
 
-// Simple ray‐sphere, returns t or –1 if miss
-float hitSphere(float3 center, float radius, Ray r) {
-    float3 oc = r.origin - center;
-    float a = dot(r.dir, r.dir);
-    float b = dot(oc, r.dir);
-    float c = dot(oc, oc) - radius*radius;
-    float disc = b*b - a*c;
-    if (disc < 0.0) return -1.0;
-    return (-b - sqrt(disc)) / a;
+// --- Intersection helpers ---
+
+// Möller–Trumbore ray/triangle: returns t or –1 if no hit
+inline float hitTriangle(SceneTriangle tri, Ray r) {
+    const float EPS = 1e-6;
+    float3 edge1 = tri.v1 - tri.v0;
+    float3 edge2 = tri.v2 - tri.v0;
+    float3 pvec  = cross(r.dir, edge2);
+    float det   = dot(edge1, pvec);
+    if (fabs(det) < EPS) return -1.0;
+    float invDet = 1.0 / det;
+    float3 tvec = r.origin - tri.v0;
+    float u = dot(tvec, pvec) * invDet;
+    if (u < 0.0 || u > 1.0) return -1.0;
+    float3 qvec = cross(tvec, edge1);
+    float v = dot(r.dir, qvec) * invDet;
+    if (v < 0.0 || u + v > 1.0) return -1.0;
+    float t = dot(edge2, qvec) * invDet;
+    return t > EPS ? t : -1.0;
 }
 
-kernel void path_trace(texture2d<float, access::write> outTex [[texture(0)]],
-                       constant uint &frameIndex           [[buffer(0)]],
-                       uint2 gid                           [[thread_position_in_grid]]) {
-    uint W = outTex.get_width();
-    uint H = outTex.get_height();
+// Plane hit: returns t or –1
+inline float hitPlane(ScenePlane pl, Ray r) {
+    float denom = dot(pl.normal, r.dir);
+    if (fabs(denom) < 1e-6) return -1.0;
+    float t = -(dot(pl.normal, r.origin) + pl.d) / denom;
+    return t > 0.0 ? t : -1.0;
+}
+
+inline float hitSphere(const SceneSphere sph, const Ray r) {
+    float3 oc = r.origin - sph.center;
+    float  a  = dot(r.dir, r.dir);
+    float  b  = dot(oc, r.dir);
+    float  c  = dot(oc, oc) - sph.radius * sph.radius;
+    float  disc = b*b - a*c;
+    if (disc < 0.0) return -1.0;
+    float t = (-b - sqrt(disc)) / a;
+    return t > 1e-6 ? t : -1.0;
+}
+
+// --- Compute kernel ---
+
+kernel void path_trace(
+    texture2d<float, access::write> outTex       [[ texture(0) ]],
+    device const SceneTriangle      *triangles    [[ buffer(1) ]],
+    constant uint                   &triCount     [[ buffer(2) ]],
+    device const ScenePlane         *planes       [[ buffer(3) ]],
+    constant uint                   &planeCount   [[ buffer(4) ]],
+    device const SceneSphere        *spheres      [[ buffer(5) ]],
+    constant uint                   &sphereCount  [[ buffer(6) ]],
+    uint2                             gid         [[ thread_position_in_grid ]]
+) {
+    uint W = outTex.get_width(), H = outTex.get_height();
     if (gid.x >= W || gid.y >= H) return;
 
-    // uv in [0,1], flip Y so (0,0) is top-left
+    // build primary ray
     float u = (float(gid.x) + 0.5) / float(W);
     float v = 1.0 - (float(gid.y) + 0.5) / float(H);
+    float3 origin = float3(0,1,3);
+    float3 ll     = float3(-2.0, -1.5, -1.0);
+    float3 horiz  = float3(4.0,  0.0,  0.0);
+    float3 vert   = float3(0.0,  3.0,  0.0);
+    Ray   r       = { origin, normalize(ll + u*horiz + v*vert - origin) };
 
-    // build primary ray
-    float3 origin    = float3(0,1,3);
-    float3 lowerLeft = float3(-2.0, -1.5, -1.0);
-    float3 horiz     = float3(4.0,  0.0,  0.0);
-    float3 vert      = float3(0.0,  3.0,  0.0);
-    Ray r = { origin, normalize(lowerLeft + u*horiz + v*vert - origin) };
+    // Blinn–Phong light setup
+    float3 lightDir  = normalize(float3(-1, 1, -0.5));
+    float3 viewDir   = normalize(-r.dir);
+    float3 ambientLC = float3(0.1);      // ambient coefficient
+    float  shininess = 32.0;             // specular exponent
 
-    // sphere intersection
-    float t_sphere = hitSphere(float3(0,0,-1), 0.5, r);
+    // find nearest hit & record normal + base color
+    float  tMin      = 1e20;
+    float3 hitNormal = float3(0);
+    float3 baseColor = float3(0,0,0);
 
-    // plane at y = -1.0
-    float t_plane = -1.0;
-    if (r.dir.y != 0.0) {
-        t_plane = (-1.0 - r.origin.y) / r.dir.y;
-        if (t_plane <= 0.0) t_plane = -1.0;
+    // Triangles → red
+    for (uint i = 0; i < triCount; ++i) {
+        float t = hitTriangle(triangles[i], r);
+        if (t > 0.0 && t < tMin) {
+            tMin      = t;
+            // compute triangle normal
+            float3 e1 = triangles[i].v1 - triangles[i].v0;
+            float3 e2 = triangles[i].v2 - triangles[i].v0;
+            hitNormal = normalize(cross(e1, e2));
+            baseColor = float3(1,0,0);
+        }
+    }
+    // Planes → green
+    for (uint i = 0; i < planeCount; ++i) {
+        float t = hitPlane(planes[i], r);
+        if (t > 0.0 && t < tMin) {
+            tMin      = t;
+            hitNormal = normalize(planes[i].normal);
+            baseColor = float3(0,1,0);
+        }
+    }
+    // Spheres → blue
+    for (uint i = 0; i < sphereCount; ++i) {
+        float t = hitSphere(spheres[i], r);
+        if (t > 0.0 && t < tMin) {
+            tMin      = t;
+            // normal at hit point
+            float3 P   = r.origin + t * r.dir;
+            hitNormal  = normalize(P - spheres[i].center);
+            baseColor  = float3(0,0,1);
+        }
     }
 
-    // shading
     float3 col;
-    // define a simple directional light once
-    const float3 lightDir = normalize(float3(1,1,1));
+    if (tMin < 1e19) {
+        // compute Blinn–Phong
+        float NdotL = max(dot(hitNormal, lightDir), 0.0);
+        float3  H   = normalize(lightDir + viewDir);
+        float NdotH = max(dot(hitNormal, H), 0.0);
+        float3 diffuse = NdotL * baseColor;
+        float3 spec    = pow(NdotH, shininess) * float3(1.0); // white highlight
 
-    if (t_sphere > 0.0 && (t_plane < 0.0 || t_sphere < t_plane)) {
-        // sphere hit
-        float3 P = r.origin + t_sphere * r.dir;
-        float3 N = normalize(P - float3(0,0,-1));
-        float diff = max(dot(N, lightDir), 0.0);
-        col = diff * float3(0.7,0.3,0.3);
-    }
-    else if (t_plane > 0.0) {
-        // plane hit
-        float3 P = r.origin + t_plane * r.dir;
-        // checkerboard: alternate 1/0 by floor(x)+floor(z)
-        float c = fmod(floor(P.x) + floor(P.z), 2.0);
-        float3 base = (c < 1.0) ? float3(1.0) : float3(0.0);
-        float diff = max(dot(float3(0,1,0), lightDir), 0.0);
-        col = diff * base;
-    }
-    else {
+        col = ambientLC * baseColor + diffuse + spec;
+    } else {
         // background gradient
         float3 dirn = normalize(r.dir);
-        float t2 = 0.5*(dirn.y + 1.0);
-        col = mix(float3(1.0), float3(0.5,0.7,1.0), t2);
+        float t2 = 0.5 * (dirn.y + 1.0);
+        col = mix(float3(1.0), float3(0.5, 0.7, 1.0), t2);
     }
 
-    outTex.write(float4(col,1.0), gid);
+    outTex.write(float4(col, 1.0), gid);
 }
 
 // Vertex→fragment struct
@@ -93,7 +167,6 @@ vertex VSOut quad_vert(uint vid [[vertex_id]]) {
     return out;
 }
 
-// now uv is correct, no flip or magic needed
 fragment float4 quad_frag(VSOut in    [[stage_in]],
                           texture2d<float> src [[texture(0)]],
                           sampler           smp [[sampler(0)]]) {

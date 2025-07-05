@@ -9,7 +9,7 @@ static CAMetalLayer* g_metalLayer = nil;
 extern "C" {
 
 void* createWindow(int width, int height, const char* title) {
-    NSRect frame = NSMakeRect(100, 100, width, height);
+    NSRect frame = NSMakeRect(1280, 720, width, height);
     NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
     
     g_window = [[NSWindow alloc] initWithContentRect:frame

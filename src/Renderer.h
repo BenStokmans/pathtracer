@@ -1,11 +1,10 @@
 #pragma once
 #include <Metal/Metal.hpp>
-#import <QuartzCore/QuartzCore.hpp>
-#include "Config.h"
+#include <QuartzCore/QuartzCore.hpp>
 
 class Renderer {
 public:
-    Renderer(MTL::Device *device);
+    explicit Renderer(MTL::Device *device);
     void draw(CA::MetalLayer *layer);
 
 private:
@@ -16,8 +15,12 @@ private:
     MTL::RenderPipelineState   *_quadPipeline;
     MTL::SamplerState          *_quadSampler;
 
-    MTL::Buffer           *_sceneBuffer;
-    uint32_t               _objectCount;
+    MTL::Buffer                 *_triangleBuffer;
+    uint32_t                     _triangleCount;
+    MTL::Buffer                 *_planeBuffer;
+    uint32_t                     _planeCount;
+    MTL::Buffer               *_sphereBuffer;
+    uint32_t                   _sphereCount;
 
     uint32_t _frameIndex = 0;
     void setupPipeline();
