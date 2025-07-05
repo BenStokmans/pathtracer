@@ -25,6 +25,8 @@ int main(int argc, char *argv[]) {
     
     // Cast the layer to CA::MetalLayer and render
     auto* layer = static_cast<CA::MetalLayer*>(metalLayer);
+    layer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+    layer->setFramebufferOnly(true);
     renderer->draw(layer);
     
     // Show window and run app

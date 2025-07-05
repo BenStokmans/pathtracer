@@ -2,66 +2,94 @@
 #include "Config.h"
 
 Renderer::Renderer(MTL::Device *device) : _device(device) {
-    // 3 vertices of a triangle (x,y,z)
-    const float vertices[] = {
-        0.0f,  0.5f, 0.0f,  // top
-       -0.5f, -0.5f, 0.0f,  // bottom left
-        0.5f, -0.5f, 0.0f   // bottom right
-    };
-    _vertexBuffer = _device->newBuffer(vertices, sizeof(vertices), MTL::ResourceStorageModeShared);
     _cmdQueue = _device->newCommandQueue();
+    setupPipeline();
+    setupTexture();
+}
 
-    // Load and compile shaders from default library
-    MTL::Library *lib = _device->newDefaultLibrary();
-    MTL::Function *vs = lib->newFunction(NS::String::string("vertex_main", NS::UTF8StringEncoding));
-    MTL::Function *fs = lib->newFunction(NS::String::string("fragment_main", NS::UTF8StringEncoding));
-    
-    // Create render pipeline descriptor
-    MTL::RenderPipelineDescriptor *desc = MTL::RenderPipelineDescriptor::alloc()->init();
-    desc->setVertexFunction(vs);
-    desc->setFragmentFunction(fs);
-    desc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
-
+void Renderer::setupPipeline() {
+    auto lib = _device->newDefaultLibrary();
+    // compute pipeline
+    auto comp = lib->newFunction(NS::String::string("path_trace", NS::UTF8StringEncoding));
     NS::Error *error = nullptr;
-    _pipelineState = _device->newRenderPipelineState(desc, &error);
-    
-    // Clean up
-    vs->release();
-    fs->release();
-    lib->release();
-    desc->release();
+    _computePipeline = _device->newComputePipelineState(comp, &error);
+
+    // display pipeline (fullscreen quad)
+    auto vfn = lib->newFunction(NS::String::string("quad_vert", NS::UTF8StringEncoding));
+    auto ffn = lib->newFunction(NS::String::string("quad_frag", NS::UTF8StringEncoding));
+    auto pd  = MTL::RenderPipelineDescriptor::alloc()->init();
+    pd->setVertexFunction(vfn);
+    pd->setFragmentFunction(ffn);
+    pd->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
+    _quadPipeline = _device->newRenderPipelineState(pd, &error);
+
+    // sampler for the quad pass
+    auto sd = MTL::SamplerDescriptor::alloc()->init();
+    sd->setMinFilter(MTL::SamplerMinMagFilterNearest);
+    sd->setMagFilter(MTL::SamplerMinMagFilterNearest);
+    _quadSampler = _device->newSamplerState(sd);
 }
 
-Renderer::~Renderer() {
-    if (_vertexBuffer) _vertexBuffer->release();
-    if (_cmdQueue) _cmdQueue->release();
-    if (_pipelineState) _pipelineState->release();
+void Renderer::setupTexture() {
+    auto desc = MTL::TextureDescriptor::texture2DDescriptor(
+        MTL::PixelFormatRGBA32Float,
+        WINDOW_WIDTH, WINDOW_HEIGHT,
+        false
+    );
+    desc->setUsage(MTL::TextureUsageShaderWrite | MTL::TextureUsageShaderRead);
+    _outputTexture = _device->newTexture(desc);
+    auto cmdBuf = _cmdQueue->commandBuffer();
+    auto blit   = cmdBuf->blitCommandEncoder();
+    MTL::Region full = MTL::Region::Make2D(0,0,WINDOW_WIDTH,WINDOW_HEIGHT);
+    std::vector<float> zero(WINDOW_WIDTH * WINDOW_HEIGHT * 4, 0.0f);
+    _outputTexture->replaceRegion(
+        full, 0, zero.data(), WINDOW_WIDTH * 4 * sizeof(float)
+    );
+    blit->endEncoding();
+    cmdBuf->commit();
+    cmdBuf->waitUntilCompleted();
 }
 
-void Renderer::draw(CA::MetalLayer* layer) {
-    // Get the next drawable
-    CA::MetalDrawable* drawable = layer->nextDrawable();
+void Renderer::draw(CA::MetalLayer *layer) {
+    // get a drawable for this frame
+    auto drawable = layer->nextDrawable();
     if (!drawable) return;
-    
-    // Create render pass descriptor
-    MTL::RenderPassDescriptor* rpd = MTL::RenderPassDescriptor::alloc()->init();
-    rpd->colorAttachments()->object(0)->setTexture(drawable->texture());
-    rpd->colorAttachments()->object(0)->setLoadAction(MTL::LoadAction::LoadActionClear);
-    rpd->colorAttachments()->object(0)->setClearColor(MTL::ClearColor::Make(0.0, 0.0, 0.0, 1.0));
-    rpd->colorAttachments()->object(0)->setStoreAction(MTL::StoreAction::StoreActionStore);
-    
-    // Create command buffer and render pass
-    MTL::CommandBuffer *cmdBuf = _cmdQueue->commandBuffer();
-    MTL::RenderCommandEncoder *enc = cmdBuf->renderCommandEncoder(rpd);
 
-    enc->setRenderPipelineState(_pipelineState);
-    enc->setVertexBuffer(_vertexBuffer, 0, 0);
-    enc->drawPrimitives(MTL::PrimitiveType::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(TRIANGLE_VERTEX_COUNT));
+    auto cmdBuf = _cmdQueue->commandBuffer();
+    auto encoder = cmdBuf->computeCommandEncoder();
+    encoder->setComputePipelineState(_computePipeline);
+    encoder->setTexture(_outputTexture, 0);
+    encoder->setBytes(&_frameIndex, sizeof(_frameIndex), 0);
 
-    enc->endEncoding();
+    MTL::Size threadsPerThreadgroup(8,8,1);
+    MTL::Size grid(WINDOW_WIDTH, WINDOW_HEIGHT,1);
+    MTL::Size threadgroups(
+        (grid.width + threadsPerThreadgroup.width - 1) / threadsPerThreadgroup.width,
+        (grid.height + threadsPerThreadgroup.height - 1) / threadsPerThreadgroup.height,
+        1
+    );
+    encoder->dispatchThreadgroups(threadgroups, threadsPerThreadgroup);
+    encoder->endEncoding();
+
+    auto rpd = MTL::RenderPassDescriptor::renderPassDescriptor();
+    auto att = rpd->colorAttachments()->object(0);
+    att->setTexture(drawable->texture());
+    att->setLoadAction(MTL::LoadActionClear);
+    att->setStoreAction(MTL::StoreActionStore);
+
+    auto re = cmdBuf->renderCommandEncoder(rpd);
+    re->setRenderPipelineState(_quadPipeline);
+    re->setFragmentTexture(_outputTexture, 0);
+    re->setFragmentSamplerState(_quadSampler, 0);
+    // draw two triangles as a strip
+    re->drawPrimitives(
+        MTL::PrimitiveTypeTriangleStrip,
+        static_cast<NS::UInteger>(0),
+        static_cast<NS::UInteger>(4)
+    );    re->endEncoding();
+
     cmdBuf->presentDrawable(drawable);
     cmdBuf->commit();
-    
-    // Clean up
-    rpd->release();
+
+    _frameIndex++;
 }
