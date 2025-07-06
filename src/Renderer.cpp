@@ -2,10 +2,9 @@
 #include "Primitives/ScenePrimitives.h"
 
 #include <iostream>
-
 #include "Config.h"
 #include <vector>
-#include <simd/simd.h>
+#include "Material.h"
 
 Renderer::Renderer(MTL::Device *device) : _device(device) {
     _cmdQueue = _device->newCommandQueue();
@@ -24,7 +23,7 @@ void Renderer::setupPipeline() {
     // display pipeline (fullscreen quad)
     auto vfn = lib->newFunction(NS::String::string("quad_vert", NS::UTF8StringEncoding));
     auto ffn = lib->newFunction(NS::String::string("quad_frag", NS::UTF8StringEncoding));
-    auto pd  = MTL::RenderPipelineDescriptor::alloc()->init();
+    auto pd = MTL::RenderPipelineDescriptor::alloc()->init();
     pd->setVertexFunction(vfn);
     pd->setFragmentFunction(ffn);
     pd->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
@@ -46,8 +45,8 @@ void Renderer::setupTexture() {
     desc->setUsage(MTL::TextureUsageShaderWrite | MTL::TextureUsageShaderRead);
     _outputTexture = _device->newTexture(desc);
     auto cmdBuf = _cmdQueue->commandBuffer();
-    auto blit   = cmdBuf->blitCommandEncoder();
-    MTL::Region full = MTL::Region::Make2D(0,0,WINDOW_WIDTH,WINDOW_HEIGHT);
+    auto blit = cmdBuf->blitCommandEncoder();
+    MTL::Region full = MTL::Region::Make2D(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
     std::vector<float> zero(WINDOW_WIDTH * WINDOW_HEIGHT * 4, 0.0f);
     _outputTexture->replaceRegion(
         full, 0, zero.data(), WINDOW_WIDTH * 4 * sizeof(float)
@@ -78,8 +77,11 @@ void Renderer::draw(CA::MetalLayer *layer) {
 
     encoder->setBytes(&_frameIndex, sizeof(_frameIndex), 7);
 
-    MTL::Size threadsPerThreadgroup(8,8,1);
-    MTL::Size grid(WINDOW_WIDTH, WINDOW_HEIGHT,1);
+    encoder->setBuffer(_materialBuffer, 0, 8);
+    encoder->setBytes(&_materialCount, sizeof(_materialCount), 9);
+
+    MTL::Size threadsPerThreadgroup(8, 8, 1);
+    MTL::Size grid(WINDOW_WIDTH, WINDOW_HEIGHT, 1);
     MTL::Size threadgroups(
         (grid.width + threadsPerThreadgroup.width - 1) / threadsPerThreadgroup.width,
         (grid.height + threadsPerThreadgroup.height - 1) / threadsPerThreadgroup.height,
@@ -113,42 +115,73 @@ void Renderer::draw(CA::MetalLayer *layer) {
 }
 
 void Renderer::setupScene() {
+    std::vector<Material> mats;
+    // a bright emissive sky‐light object (if you want geometry lights later)
+    mats.push_back({{0, 0, 0}, {5, 5, 5}, 0.0f});
+
+    // triangle
+    mats.push_back({
+        {0.8f, 0.2f, 0.2f},
+        {0, 0, 0},
+        0.0f
+    });
+
+    //plane
+    mats.push_back({
+        {0.2f, 0.8f, 0.2f},
+        {0, 0, 0},
+        0.0f
+    });
+
+    // sphere
+    mats.push_back({
+        {0.2f, 0.2f, 0.8f},
+        {0, 0, 0},
+        0.8f
+    });
+
+    _materialCount = static_cast<uint32_t>(mats.size());
+    _materialBuffer = _device->newBuffer(
+        mats.size() * sizeof(Material),
+        MTL::ResourceStorageModeShared
+    );
+    memcpy(_materialBuffer->contents(), mats.data(), mats.size() * sizeof(Material));
+
     using Tri = SceneTriangle;
     using Pln = ScenePlane;
     using Sph = SceneSphere;
 
-    std::vector<Tri> tris = {
-        { {-0.5f,0, -1}, {0.5f,0,-1}, {0,1,-1},
-          {1,0,0}, 0.2f }
+    std::vector<SceneTriangle> tris = {
+        {{-0.5f, 0, -1}, {0.5f, 0, -1}, {0, 1, -1}, 1}
     };
-    std::vector<Pln> plns = {
-        { {0,1,0}, 1.0f,
-          {0,1,0}, 0.3f }
+    std::vector<ScenePlane> plns = {
+        {{0, 1, 0}, 1.0f, 2}
     };
-    std::vector<Sph> sphs = {
-        { {1.0f,0.5f,-2}, 0.5f,
-          {0,0,1}, 0.3f }
+    std::vector<SceneSphere> sphs = {
+        {{0.0f, 10.0f, 0.0f}, 5.0f, 0},
+        {{0.5f, 0.5f, -0.5f}, 0.5f, 3},
+        {{-0.5f, 0.5f, -0.5f}, 0.5f, 3}
     };
 
     _triangleCount = tris.size();
-    _planeCount    = plns.size();
-    _sphereCount   = sphs.size();
+    _planeCount = plns.size();
+    _sphereCount = sphs.size();
 
     _triangleBuffer = _device->newBuffer(
         tris.size() * sizeof(Tri),
         MTL::ResourceStorageModeShared
     );
-    memcpy(_triangleBuffer->contents(), tris.data(), tris.size()*sizeof(Tri));
+    memcpy(_triangleBuffer->contents(), tris.data(), tris.size() * sizeof(Tri));
 
     _planeBuffer = _device->newBuffer(
         plns.size() * sizeof(Pln),
         MTL::ResourceStorageModeShared
     );
-    memcpy(_planeBuffer->contents(), plns.data(), plns.size()*sizeof(Pln));
+    memcpy(_planeBuffer->contents(), plns.data(), plns.size() * sizeof(Pln));
 
     _sphereBuffer = _device->newBuffer(
         sphs.size() * sizeof(Sph),
         MTL::ResourceStorageModeShared
     );
-    memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size()*sizeof(Sph));
+    memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size() * sizeof(Sph));
 }

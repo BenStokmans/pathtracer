@@ -4,25 +4,15 @@ using namespace metal;
 // maximum bounces per sample
 #define MAX_BOUNCES 8
 
-struct SceneTriangle {
-    float3 v0, v1, v2;
+struct Material {
     float3 albedo;
-    float   reflectivity;
-};
-
-struct ScenePlane {
-    float3 normal;
-    float  d;
-    float3 albedo;
+    float3 emission;
     float  reflectivity;
 };
 
-struct SceneSphere {
-    float3 center;
-    float  radius;
-    float3 albedo;
-    float  reflectivity;
-};
+struct SceneTriangle { float3 v0, v1, v2; uint matIndex; };
+struct ScenePlane    { float3 normal; float  d;   uint matIndex; };
+struct SceneSphere   { float3 center; float  radius; uint matIndex; };
 
 inline float3 reflectDir(float3 I, float3 N) {
     return I - 2.0 * dot(I,N) * N;
@@ -56,8 +46,7 @@ inline float3 randomHemisphere(float3 N, thread uint &st) {
 
 // returns (t, normal, albedo) or t<0 if miss
 inline float intersectTriangle(SceneTriangle tri, Ray r,
-                               thread float3 &outN,
-                               thread float3 &outAlb, thread float  &outRefl) {
+                               thread float3 &outN) {
     const float EPS = 1e-6;
     float3 e1 = tri.v1 - tri.v0, e2 = tri.v2 - tri.v0;
     float3 p = cross(r.dir, e2);
@@ -73,24 +62,21 @@ inline float intersectTriangle(SceneTriangle tri, Ray r,
     float t = dot(e2,q)*inv;
     if (t<EPS) return -1.0;
     outN       = normalize(cross(e1,e2));
-    outAlb     = tri.albedo;
-    outRefl    = tri.reflectivity;
-    return t;}
+    return t;
+    }
 
 inline float intersectPlane(const ScenePlane pl, Ray r,
-                            thread float3 &outN, thread float3 &outAlb, thread float  &outRefl) {
+                            thread float3 &outN) {
     float denom = dot(pl.normal, r.dir);
     if (fabs(denom) < 1e-6) return -1.0;
     float t = -(dot(pl.normal, r.origin) + pl.d) / denom;
     if (t <= 0.0) return -1.0;
     outN   = pl.normal;
-    outAlb = pl.albedo;
-    outRefl = pl.reflectivity;
     return t;
 }
 
 inline float intersectSphere(const SceneSphere sp, Ray r,
-                             thread float3 &outN, thread float3 &outAlb, thread float  &outRefl) {
+                             thread float3 &outN) {
     float3 oc = r.origin - sp.center;
     float a = dot(r.dir, r.dir),
           b = dot(oc, r.dir),
@@ -101,15 +87,13 @@ inline float intersectSphere(const SceneSphere sp, Ray r,
     if (t < 1e-6) return -1.0;
     float3 P = r.origin + t*r.dir;
     outN   = normalize(P - sp.center);
-    outAlb = sp.albedo;
-    outRefl = sp.reflectivity;
     return t;
 }
 
 // --------- Path‐trace kernel --------------
 
 kernel void path_trace(
-    texture2d<float, access::read_write> outTex   [[ texture(0) ]],
+    texture2d<float, access::read_write> outTex   [[texture(0)]],
     device const SceneTriangle           *triangles [[buffer(1)]],
     constant uint                        &triCount  [[buffer(2)]],
     device const ScenePlane              *planes    [[buffer(3)]],
@@ -117,7 +101,9 @@ kernel void path_trace(
     device const SceneSphere             *spheres   [[buffer(5)]],
     constant uint                        &sphereCount[[buffer(6)]],
     constant uint                        &frameIndex[[buffer(7)]],
-    uint2                                gid      [[thread_position_in_grid]]
+    device const Material                *materials [[buffer(8)]],
+    constant uint                        &matCount  [[buffer(9)]],
+    uint2                                gid       [[thread_position_in_grid]]
 ) {
     uint W = outTex.get_width(), H = outTex.get_height();
     if (gid.x>=W || gid.y>=H) return;
@@ -142,56 +128,59 @@ kernel void path_trace(
         // 1) Find the nearest intersection
         float  bestT   = 1e20;
         float3 bestN   = float3(0.0);
-        float3 bestAlb = float3(0.0);
-        float  bestRefl = 0.0;
+        uint   bestMat  = 0;
 
         // Triangles
         for (uint i = 0; i < triCount; ++i) {
-            float3 nTmp, albTmp;
-            float  t = intersectTriangle(triangles[i], ray, nTmp, albTmp, bestRefl);
+            float3 nTmp;
+            float  t = intersectTriangle(triangles[i], ray, nTmp);
             if (t > 0.0 && t < bestT) {
                 bestT   = t;
                 bestN   = nTmp;
-                bestAlb = albTmp;
+                bestMat = triangles[i].matIndex;
             }
         }
 
         // Planes
         for (uint i = 0; i < planeCount; ++i) {
-            float3 nTmp, albTmp;
-            float  t = intersectPlane(planes[i], ray, nTmp, albTmp, bestRefl);
+            float3 nTmp;
+            float  t = intersectPlane(planes[i], ray, nTmp);
             if (t > 0.0 && t < bestT) {
                 bestT   = t;
                 bestN   = nTmp;
-                bestAlb = albTmp;
+                bestMat = planes[i].matIndex;
             }
         }
 
         // Spheres
         for (uint i = 0; i < sphereCount; ++i) {
-            float3 nTmp, albTmp;
-            float  t = intersectSphere(spheres[i], ray, nTmp, albTmp, bestRefl);
+            float3 nTmp;
+            float  t = intersectSphere(spheres[i], ray, nTmp);
             if (t > 0.0 && t < bestT) {
                 bestT   = t;
                 bestN   = nTmp;
-                bestAlb = albTmp;
+                bestMat = spheres[i].matIndex;
             }
         }
 
         if (bestT > 1e19) {
             float  tt  = 0.5*(normalize(ray.dir).y + 1.0);
-            float3 sky = mix(float3(1.0), float3(0.5, 0.7, 1.0), tt);
+            float3 sky = mix(float3(0.2), float3(0.005, 0.007, 0.01), tt);
             L += throughput * sky;
             break;
         }
 
+        Material mat = materials[bestMat];
+
+        L += throughput * mat.emission;
+
         float p = rand01(st);
-        if (p < bestRefl) {
+        if (p < mat.reflectivity) {
             // perfect reflection
             float3 P = ray.origin + bestT * ray.dir;
             ray.origin = P + 0.001 * bestN;
             ray.dir    = reflectDir(ray.dir, bestN);
-            throughput *= bestRefl;
+            throughput *= mat.reflectivity;
             continue;
         }
         else {
@@ -199,7 +188,7 @@ kernel void path_trace(
             float3 P = ray.origin + bestT * ray.dir;
             ray.origin = P + 0.001 * bestN;
             ray.dir    = randomHemisphere(bestN, st);
-            throughput *= bestAlb;
+            throughput *= mat.albedo * (1.0 - mat.reflectivity);
             continue;
         }
     }

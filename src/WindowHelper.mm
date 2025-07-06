@@ -34,7 +34,16 @@ static CAMetalLayer* g_metalLayer = nil;
 extern "C" {
 
 void* createWindow(int width, int height, const char* title) {
-    NSRect frame = NSMakeRect(1280, 720, width, height);
+    NSRect frame = NSMakeRect(0, 0, width, height);
+
+    // Centre the window on the screen
+    NSScreen* mainScreen = [NSScreen mainScreen];
+    if (mainScreen) {
+        NSRect screenFrame = [mainScreen frame];
+        frame.origin.x = (screenFrame.size.width - width) / 2;
+        frame.origin.y = (screenFrame.size.height - height) / 2;
+    }
+
     NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
     
     g_window = [[NSWindow alloc] initWithContentRect:frame
