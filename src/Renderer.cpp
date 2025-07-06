@@ -176,57 +176,67 @@ void Renderer::draw(CA::MetalLayer *layer) {
 }
 
 void Renderer::setupScene() {
-    std::vector<Material> mats;
-    // a bright emissive sky‐light object (if you want geometry lights later)
-    mats.push_back({{0, 0, 0}, {5, 5, 5}, 0.0f});
-
-    // triangle
-    mats.push_back({
-        {0.8f, 0.2f, 0.2f},
-        {0, 0, 0},
-        0.0f
-    });
-
-    //plane
-    mats.push_back({
-        {0.2f, 0.8f, 0.2f},
-        {0, 0, 0},
-        0.0f
-    });
-
-    // sphere
-    mats.push_back({
-        {0.2f, 0.2f, 0.8f},
-        {0, 0, 0},
-        0.8f
-    });
-
-    _materialCount = static_cast<uint32_t>(mats.size());
+    //
+    //  1) MATERIALS
+    //
+    //  idx 0: emissive “light panel”
+    //  idx 1: white diffuse (walls, floor, back)
+    //  idx 2: red diffuse
+    //  idx 3: green diffuse
+    //  idx 4: mirror
+    //  idx 5: glass (ior=1.5)
+    std::vector<Material> mats = {
+        // albedo         emission        reflectivity  ior
+        {{0, 0, 0}, {15, 15, 15}, 0.0f, 1.0f}, // 0 light
+        {{0.8f, 0.8f, 0.8f}, {0, 0, 0}, 0.0f, 1.0f}, // 1 white
+        {{0.8f, 0.2f, 0.2f}, {0, 0, 0}, 0.0f, 1.0f}, // 2 red
+        {{0.2f, 0.8f, 0.2f}, {0, 0, 0}, 0.0f, 1.0f}, // 3 green
+        {{0.9f, 0.9f, 0.9f}, {0, 0, 0}, 1.0f, 1.0f}, // 4 mirror
+        {{1.0f, 1.0f, 1.0f}, {0, 0, 0}, 0.0f, 1.5f} // 5 glass
+    };
+    _materialCount = (uint32_t) mats.size();
     _materialBuffer = _device->newBuffer(
         mats.size() * sizeof(Material),
         MTL::ResourceStorageModeShared
     );
     memcpy(_materialBuffer->contents(), mats.data(), mats.size() * sizeof(Material));
 
+    //
+    //  2) GEOMETRY
+    //
+    //  a) Ceiling “light panel” as two triangles (mat 0)
     using Tri = SceneTriangle;
-    using Pln = ScenePlane;
+    std::vector<Tri> tris;
+    float yL = 1.9f; // just below the ceiling
+    float x0 = -0.5f, x1 = 0.5f;
+    float z0 = -2.0f, z1 = -1.0f;
+    tris.push_back({{x0, yL, z0}, {x1, yL, z0}, {x1, yL, z1}, 0});
+    tris.push_back({{x1, yL, z1}, {x0, yL, z1}, {x0, yL, z0}, 0});
+
+    //  b) Spheres (mat 2:red, 4:mirror, 5:glass, 3:green)
     using Sph = SceneSphere;
-
-    std::vector<SceneTriangle> tris = {
-        {{-0.5f, 0, -1}, {0.5f, 0, -1}, {0, 1, -1}, 1}
-    };
-    std::vector<ScenePlane> plns = {
-        {{0, 1, 0}, 1.0f, 2}
-    };
-    std::vector<SceneSphere> sphs = {
-        {{0.0f, 10.0f, 0.0f}, 5.0f, 0},
-        {{0.5f, 0.5f, -0.5f}, 0.5f, 3},
-        {{-0.5f, 0.5f, -0.5f}, 0.5f, 3}
+    std::vector<Sph> sphs = {
+        {{-0.6f, 0.25f, -0.1f}, 0.25f, 2}, // small red
+        {{0.0f, 0.25f, -0.2f}, 0.25f, 4}, // mirror
+        {{0.6f, 0.25f, -0.3f}, 0.25f, 5}, // glass
+        {{0.0f, 0.9f, -0.2f}, 0.25f, 3} // green
     };
 
-    _triangleCount = tris.size();
-    _planeCount = plns.size();
-    _sphereCount = sphs.size();
+    //  c) Walls & floor & back (infinite planes, mat 1)
+    using Pln = ScenePlane;
+    std::vector<Pln> plns = {
+        // normal         d        matIndex
+        {{0, 1, 0}, 0.0f, 1}, // floor y=0
+        {{0, -1, 0}, 2.0f, 1}, // ceiling y=2
+        {{1, 0, 0}, 2.0f, 1}, // left  x=-2
+        {{-1, 0, 0}, 2.0f, 1}, // right x= 2
+        {{0, 0, 1}, 3.0f, 1} // back  z=-3
+    };
+
+    // upload
+    _triangleCount = (uint32_t) tris.size();
+    _planeCount = (uint32_t) plns.size();
+    _sphereCount = (uint32_t) sphs.size();
 
     _triangleBuffer = _device->newBuffer(
         tris.size() * sizeof(Tri),
@@ -249,7 +259,8 @@ void Renderer::setupScene() {
 
 void Renderer::resetCamera() {
     _camPos = {0, 1, 3};
-    _yaw = _pitch = 0.0f;
+    _yaw = 3.14159265f;
+    _pitch = 0.0f;
 }
 
 void Renderer::clearAccumulation() {

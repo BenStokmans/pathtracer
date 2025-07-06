@@ -15,11 +15,27 @@ struct Material {
     float3 albedo;
     float3 emission;
     float  reflectivity;
+    float  ior; // index of refraction, 1.0 for air, >1.0 for dielectric
 };
 
 struct SceneTriangle { float3 v0, v1, v2; uint matIndex; };
 struct ScenePlane    { float3 normal; float  d;   uint matIndex; };
 struct SceneSphere   { float3 center; float  radius; uint matIndex; };
+
+inline float3 refractDir(float3 I, float3 N, float eta) {
+    // I incoming, N normal, eta = η₁/η₂
+    float cosI = dot(-I, N);
+    float sin2T = eta*eta * (1.0 - cosI*cosI);
+    if (sin2T > 1.0) return float3(0); // total internal reflection
+    float cosT = sqrt(1.0 - sin2T);
+    return eta * I + (eta * cosI - cosT) * N;
+}
+
+inline float fresnelSchlick(float cosTheta, float F0) {
+    // Schlick’s approximation
+    return F0 + (1.0 - F0)*pow(1.0 - cosTheta, 5.0);
+}
+
 
 inline float3 reflectDir(float3 I, float3 N) {
     return I - 2.0 * dot(I,N) * N;
@@ -175,26 +191,57 @@ kernel void path_trace(
             break;
         }
 
+        // compute hit‐point
+        float3 P = ray.origin + bestT * ray.dir;
+
         Material mat = materials[bestMat];
 
         L += throughput * mat.emission;
 
-        float p = rand01(st);
-        if (p < mat.reflectivity) {
-            // perfect reflection
-            float3 P = ray.origin + bestT * ray.dir;
-            ray.origin = P + 0.001 * bestN;
-            ray.dir    = reflectDir(ray.dir, bestN);
-            throughput *= mat.reflectivity;
+        // compute cosine of incidence
+        float cosI = dot(ray.dir, bestN);
+        bool entering = cosI < 0.0;
+        float3 N = entering ? bestN : -bestN;
+
+        // if this material has an ior > 1, treat it as dielectric:
+        if (mat.ior > 1.0) {
+            // decide indices
+            float eta_i = entering ? 1.0 : mat.ior;
+            float eta_t = entering ? mat.ior : 1.0;
+            float eta   = eta_i / eta_t;
+
+            // base reflectance at normal incidence
+            float F0 = pow((eta_i - eta_t)/(eta_i + eta_t), 2.0);
+            float R  = fresnelSchlick(fabs(cosI), F0);
+
+            // sample reflect vs refract
+            if (rand01(st) < R) {
+                // reflect
+                ray.origin = P + N * 0.001;
+                ray.dir    = reflect(ray.dir, N);
+                throughput *= R;       // attenuate by reflectance
+            } else {
+                // refract
+                float3 T = refractDir(ray.dir, N, eta);
+                ray.origin = P - N * 0.001; // move *into* the surface
+                ray.dir    = T;
+                throughput *= (1.0 - R);   // attenuate by transmittance
+            }
             continue;
         }
-        else {
-            // diffuse bounce
-            float3 P = ray.origin + bestT * ray.dir;
-            ray.origin = P + 0.001 * bestN;
+
+        // otherwise fall back to your old metallic/diffuse mix:
+        float p = rand01(st);
+        if (p < mat.reflectivity) {
+            // metallic reflect
+            ray.origin = P + bestN * 0.001;
+            ray.dir    = reflect(ray.dir, bestN);
+            throughput *= mat.reflectivity;
+        } else {
+            // diffuse dome
+            ray.origin = P + bestN * 0.001;
             ray.dir    = randomHemisphere(bestN, st);
             throughput *= mat.albedo * (1.0 - mat.reflectivity);
-            continue;
         }
     }
 
