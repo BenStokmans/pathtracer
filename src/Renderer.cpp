@@ -4,10 +4,16 @@
 #include <iostream>
 #include "Config.h"
 #include <vector>
+
+#include "Camera.h"
 #include "Material.h"
+
+static constexpr float PI_F = 3.14159265358979323846f; // Define PI constant
 
 Renderer::Renderer(MTL::Device *device) : _device(device) {
     _cmdQueue = _device->newCommandQueue();
+    _lastFpsTime = std::chrono::high_resolution_clock::now();
+    _lastUpdate = std::chrono::high_resolution_clock::now();
     setupPipeline();
     setupTexture();
     setupScene();
@@ -57,6 +63,26 @@ void Renderer::setupTexture() {
 }
 
 void Renderer::draw(CA::MetalLayer *layer) {
+    // compute delta‐time
+    auto now = std::chrono::high_resolution_clock::now();
+    float dt = std::chrono::duration<float>(now - _lastUpdate).count();
+    _lastUpdate = now;
+
+    // update camera
+    _move.update(dt);
+    _camPos = _move.position();
+    _yaw = _move.yaw();
+    _pitch = _move.pitch();
+
+    if (_move.hasMoved()) {
+        clearAccumulation();
+        _move.resetMoved();
+    }
+
+    // reset accumulation if moving
+    if (simd::length(_move.position() - _camPos) > 1e-5f)
+        clearAccumulation();
+
     // get a drawable for this frame
     auto drawable = layer->nextDrawable();
     if (!drawable) return;
@@ -79,6 +105,28 @@ void Renderer::draw(CA::MetalLayer *layer) {
 
     encoder->setBuffer(_materialBuffer, 0, 8);
     encoder->setBytes(&_materialCount, sizeof(_materialCount), 9);
+
+    float aspect = static_cast<float>(WINDOW_WIDTH) / WINDOW_HEIGHT;
+    float theta = _fov * (PI_F / 180.0f);
+    float halfH = tan(theta * 0.5f);
+    float halfW = aspect * halfH;
+
+    simd::float3 front = {
+        cos(_pitch) * sin(_yaw),
+        sin(_pitch),
+        cos(_pitch) * cos(_yaw)
+    };
+    simd::float3 worldUp = simd_make_float3(0.0f, 1.0f, 0.0f);
+    simd::float3 right = simd::normalize(simd::cross(front, worldUp));
+    simd::float3 up = simd::cross(right, front);
+
+    Camera cam{};
+    cam.origin = _camPos;
+    cam.lowerLeft = _camPos + front - right * halfW - up * halfH;
+    cam.horizontal = 2 * halfW * right;
+    cam.vertical = 2 * halfH * up;
+
+    encoder->setBytes(&cam, sizeof(cam), 10);
 
     MTL::Size threadsPerThreadgroup(8, 8, 1);
     MTL::Size grid(WINDOW_WIDTH, WINDOW_HEIGHT, 1);
@@ -110,6 +158,19 @@ void Renderer::draw(CA::MetalLayer *layer) {
 
     cmdBuf->presentDrawable(drawable);
     cmdBuf->commit();
+
+    _framesSinceLastFps++;
+
+    // check if one second has elapsed
+    now = std::chrono::high_resolution_clock::now();
+    auto elapsed = std::chrono::duration<double>(now - _lastFpsTime).count();
+    if (elapsed >= 1.0) {
+        double fps = static_cast<double>(_framesSinceLastFps) / elapsed;
+        std::cout << "FPS: " << fps << std::endl;
+        // reset
+        _framesSinceLastFps = 0;
+        _lastFpsTime = now;
+    }
 
     _frameIndex++;
 }
@@ -184,4 +245,14 @@ void Renderer::setupScene() {
         MTL::ResourceStorageModeShared
     );
     memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size() * sizeof(Sph));
+}
+
+void Renderer::resetCamera() {
+    _camPos = {0, 1, 3};
+    _yaw = _pitch = 0.0f;
+}
+
+void Renderer::clearAccumulation() {
+    // reset our sample counter
+    _frameIndex = 0;
 }

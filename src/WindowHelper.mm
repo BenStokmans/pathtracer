@@ -9,6 +9,7 @@
 CVDisplayLinkRef    gDisplayLink = nullptr;
 Renderer           *gRenderer    = nullptr;
 CA::MetalLayer     *gLayer       = nullptr;
+MovementHandler    *gMovement = nullptr;
 
 
 static CVReturn DisplayLinkCallback( CVDisplayLinkRef dl,
@@ -50,9 +51,11 @@ void* createWindow(int width, int height, const char* title) {
                                            styleMask:style
                                              backing:NSBackingStoreBuffered
                                                defer:NO];
+
+    [g_window setAcceptsMouseMovedEvents:YES];
     
     [g_window setTitle:[NSString stringWithUTF8String:title]];
-    
+
     // Create content view
     NSView* contentView = [[NSView alloc] init];
     [g_window setContentView:contentView];
@@ -89,6 +92,35 @@ void runApp() {
                                    &DisplayLinkCallback,
                                    nullptr);
     CVDisplayLinkStart(gDisplayLink);
+
+    // key down
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent*(NSEvent* ev) {
+      unichar key = [[ev charactersIgnoringModifiers] characterAtIndex:0];
+      switch(key) {
+        case 'q': [NSApp terminate:nil]; return nil;
+        default:
+          gMovement->keyDown(key);
+          return nil;
+      }
+    }];
+
+    // key up
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyUp handler:^NSEvent*(NSEvent* ev) {
+      unichar key = [[ev charactersIgnoringModifiers] characterAtIndex:0];
+      gMovement->keyUp(key);
+      return nil;
+    }];
+
+    // mouse move
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved handler:^NSEvent*(NSEvent* ev) {
+      gMovement->mouseMove(ev.deltaX, ev.deltaY);
+      return nil;
+    }];
+
+    // Hide the OS cursor
+    CGDisplayHideCursor(kCGDirectMainDisplay);
+    // Let us control the cursor position independently
+    CGAssociateMouseAndMouseCursorPosition(false);
 
     [NSApp run];
 }

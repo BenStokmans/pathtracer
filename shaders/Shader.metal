@@ -4,6 +4,13 @@ using namespace metal;
 // maximum bounces per sample
 #define MAX_BOUNCES 8
 
+struct Camera {
+    float3 origin;
+    float3 lowerLeft;
+    float3 horizontal;
+    float3 vertical;
+};
+
 struct Material {
     float3 albedo;
     float3 emission;
@@ -103,6 +110,7 @@ kernel void path_trace(
     constant uint                        &frameIndex[[buffer(7)]],
     device const Material                *materials [[buffer(8)]],
     constant uint                        &matCount  [[buffer(9)]],
+    constant Camera                      &cam        [[ buffer(10) ]],
     uint2                                gid       [[thread_position_in_grid]]
 ) {
     uint W = outTex.get_width(), H = outTex.get_height();
@@ -114,12 +122,9 @@ kernel void path_trace(
     // initialize ray & throughput
     float u = (float(gid.x) + rand01(st))/float(W);
     float v = 1.0 - (float(gid.y) + rand01(st))/float(H);
-    float3 origin = float3(0,1,3),
-           ll     = float3(-2,-1.5,-1),
-           horiz  = float3(4,0,0),
-           vert   = float3(0,3,0);
-    Ray ray = { origin, normalize(ll + u*horiz + v*vert - origin) };
-
+    Ray ray;
+    ray.origin = cam.origin;
+    ray.dir    = normalize(cam.lowerLeft + u*cam.horizontal + v*cam.vertical - cam.origin);
     // inside your path_trace, before the bounce loop:
     float3 throughput = float3(1.0);
     float3 L = float3(0.0);
