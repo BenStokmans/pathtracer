@@ -1,153 +1,215 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// maximum bounces per sample
+#define MAX_BOUNCES 8
+
 struct SceneTriangle {
-    float3 v0;
-    float3 v1;
-    float3 v2;
+    float3 v0, v1, v2;
+    float3 albedo;
+    float   reflectivity;
 };
 
 struct ScenePlane {
     float3 normal;
     float  d;
+    float3 albedo;
+    float  reflectivity;
 };
 
 struct SceneSphere {
     float3 center;
     float  radius;
+    float3 albedo;
+    float  reflectivity;
 };
 
-struct Ray {
-    float3 origin;
-    float3 dir;
-};
-
-// --- Intersection helpers ---
-
-// Möller–Trumbore ray/triangle: returns t or –1 if no hit
-inline float hitTriangle(SceneTriangle tri, Ray r) {
-    const float EPS = 1e-6;
-    float3 edge1 = tri.v1 - tri.v0;
-    float3 edge2 = tri.v2 - tri.v0;
-    float3 pvec  = cross(r.dir, edge2);
-    float det   = dot(edge1, pvec);
-    if (fabs(det) < EPS) return -1.0;
-    float invDet = 1.0 / det;
-    float3 tvec = r.origin - tri.v0;
-    float u = dot(tvec, pvec) * invDet;
-    if (u < 0.0 || u > 1.0) return -1.0;
-    float3 qvec = cross(tvec, edge1);
-    float v = dot(r.dir, qvec) * invDet;
-    if (v < 0.0 || u + v > 1.0) return -1.0;
-    float t = dot(edge2, qvec) * invDet;
-    return t > EPS ? t : -1.0;
+inline float3 reflectDir(float3 I, float3 N) {
+    return I - 2.0 * dot(I,N) * N;
 }
 
-// Plane hit: returns t or –1
-inline float hitPlane(ScenePlane pl, Ray r) {
+struct Ray { float3 origin, dir; };
+
+// RNG — LCG + [0,1)
+inline uint lcg(thread uint &st) {
+    st = st * 1664525u + 1013904223u;
+    return st;
+}
+inline float rand01(thread uint &st) {
+    return (float)(lcg(st) & 0x00FFFFFF) / float(0x01000000);
+}
+
+// cosine-weighted hemisphere
+inline float3 randomHemisphere(float3 N, thread uint &st) {
+    float u = rand01(st), v = rand01(st);
+    float r = sqrt(u), theta = 2.0 * M_PI_F * v;
+    // sample in tangent space
+    float3 s = float3(r*cos(theta), r*sin(theta), sqrt(1.0 - u));
+    // build basis
+    float3 up = abs(N.z) < .9 ? float3(0,0,1) : float3(1,0,0);
+    float3 tangent = normalize(cross(up, N));
+    float3 bitan  = cross(N, tangent);
+    return normalize(s.x*tangent + s.y*bitan + s.z*N);
+}
+
+// --------- Intersection --------------
+
+// returns (t, normal, albedo) or t<0 if miss
+inline float intersectTriangle(SceneTriangle tri, Ray r,
+                               thread float3 &outN,
+                               thread float3 &outAlb, thread float  &outRefl) {
+    const float EPS = 1e-6;
+    float3 e1 = tri.v1 - tri.v0, e2 = tri.v2 - tri.v0;
+    float3 p = cross(r.dir, e2);
+    float  det = dot(e1, p);
+    if (fabs(det) < EPS) return -1.0;
+    float inv = 1.0/det;
+    float3 tvec = r.origin - tri.v0;
+    float u = dot(tvec,p)*inv;
+    if (u<0||u>1) return -1.0;
+    float3 q = cross(tvec, e1);
+    float v = dot(r.dir,q)*inv;
+    if (v<0||u+v>1) return -1.0;
+    float t = dot(e2,q)*inv;
+    if (t<EPS) return -1.0;
+    outN       = normalize(cross(e1,e2));
+    outAlb     = tri.albedo;
+    outRefl    = tri.reflectivity;
+    return t;}
+
+inline float intersectPlane(const ScenePlane pl, Ray r,
+                            thread float3 &outN, thread float3 &outAlb, thread float  &outRefl) {
     float denom = dot(pl.normal, r.dir);
     if (fabs(denom) < 1e-6) return -1.0;
     float t = -(dot(pl.normal, r.origin) + pl.d) / denom;
-    return t > 0.0 ? t : -1.0;
+    if (t <= 0.0) return -1.0;
+    outN   = pl.normal;
+    outAlb = pl.albedo;
+    outRefl = pl.reflectivity;
+    return t;
 }
 
-inline float hitSphere(const SceneSphere sph, const Ray r) {
-    float3 oc = r.origin - sph.center;
-    float  a  = dot(r.dir, r.dir);
-    float  b  = dot(oc, r.dir);
-    float  c  = dot(oc, oc) - sph.radius * sph.radius;
-    float  disc = b*b - a*c;
+inline float intersectSphere(const SceneSphere sp, Ray r,
+                             thread float3 &outN, thread float3 &outAlb, thread float  &outRefl) {
+    float3 oc = r.origin - sp.center;
+    float a = dot(r.dir, r.dir),
+          b = dot(oc, r.dir),
+          c = dot(oc, oc) - sp.radius*sp.radius;
+    float disc = b*b - a*c;
     if (disc < 0.0) return -1.0;
     float t = (-b - sqrt(disc)) / a;
-    return t > 1e-6 ? t : -1.0;
+    if (t < 1e-6) return -1.0;
+    float3 P = r.origin + t*r.dir;
+    outN   = normalize(P - sp.center);
+    outAlb = sp.albedo;
+    outRefl = sp.reflectivity;
+    return t;
 }
 
-// --- Compute kernel ---
+// --------- Path‐trace kernel --------------
 
 kernel void path_trace(
-    texture2d<float, access::write> outTex       [[ texture(0) ]],
-    device const SceneTriangle      *triangles    [[ buffer(1) ]],
-    constant uint                   &triCount     [[ buffer(2) ]],
-    device const ScenePlane         *planes       [[ buffer(3) ]],
-    constant uint                   &planeCount   [[ buffer(4) ]],
-    device const SceneSphere        *spheres      [[ buffer(5) ]],
-    constant uint                   &sphereCount  [[ buffer(6) ]],
-    uint2                             gid         [[ thread_position_in_grid ]]
+    texture2d<float, access::read_write> outTex   [[ texture(0) ]],
+    device const SceneTriangle           *triangles [[buffer(1)]],
+    constant uint                        &triCount  [[buffer(2)]],
+    device const ScenePlane              *planes    [[buffer(3)]],
+    constant uint                        &planeCount[[buffer(4)]],
+    device const SceneSphere             *spheres   [[buffer(5)]],
+    constant uint                        &sphereCount[[buffer(6)]],
+    constant uint                        &frameIndex[[buffer(7)]],
+    uint2                                gid      [[thread_position_in_grid]]
 ) {
     uint W = outTex.get_width(), H = outTex.get_height();
-    if (gid.x >= W || gid.y >= H) return;
+    if (gid.x>=W || gid.y>=H) return;
 
-    // build primary ray
-    float u = (float(gid.x) + 0.5) / float(W);
-    float v = 1.0 - (float(gid.y) + 0.5) / float(H);
-    float3 origin = float3(0,1,3);
-    float3 ll     = float3(-2.0, -1.5, -1.0);
-    float3 horiz  = float3(4.0,  0.0,  0.0);
-    float3 vert   = float3(0.0,  3.0,  0.0);
-    Ray   r       = { origin, normalize(ll + u*horiz + v*vert - origin) };
+    // seed RNG per‐pixel+frame
+    thread uint st = gid.x + gid.y*W + frameIndex*1973;
 
-    // Blinn–Phong light setup
-    float3 lightDir  = normalize(float3(-1, 1, -0.5));
-    float3 viewDir   = normalize(-r.dir);
-    float3 ambientLC = float3(0.1);      // ambient coefficient
-    float  shininess = 32.0;             // specular exponent
+    // initialize ray & throughput
+    float u = (float(gid.x) + rand01(st))/float(W);
+    float v = 1.0 - (float(gid.y) + rand01(st))/float(H);
+    float3 origin = float3(0,1,3),
+           ll     = float3(-2,-1.5,-1),
+           horiz  = float3(4,0,0),
+           vert   = float3(0,3,0);
+    Ray ray = { origin, normalize(ll + u*horiz + v*vert - origin) };
 
-    // find nearest hit & record normal + base color
-    float  tMin      = 1e20;
-    float3 hitNormal = float3(0);
-    float3 baseColor = float3(0,0,0);
+    // inside your path_trace, before the bounce loop:
+    float3 throughput = float3(1.0);
+    float3 L = float3(0.0);
 
-    // Triangles → red
-    for (uint i = 0; i < triCount; ++i) {
-        float t = hitTriangle(triangles[i], r);
-        if (t > 0.0 && t < tMin) {
-            tMin      = t;
-            // compute triangle normal
-            float3 e1 = triangles[i].v1 - triangles[i].v0;
-            float3 e2 = triangles[i].v2 - triangles[i].v0;
-            hitNormal = normalize(cross(e1, e2));
-            baseColor = float3(1,0,0);
+    for (uint bounce = 0; bounce < MAX_BOUNCES; ++bounce) {
+        // 1) Find the nearest intersection
+        float  bestT   = 1e20;
+        float3 bestN   = float3(0.0);
+        float3 bestAlb = float3(0.0);
+        float  bestRefl = 0.0;
+
+        // Triangles
+        for (uint i = 0; i < triCount; ++i) {
+            float3 nTmp, albTmp;
+            float  t = intersectTriangle(triangles[i], ray, nTmp, albTmp, bestRefl);
+            if (t > 0.0 && t < bestT) {
+                bestT   = t;
+                bestN   = nTmp;
+                bestAlb = albTmp;
+            }
+        }
+
+        // Planes
+        for (uint i = 0; i < planeCount; ++i) {
+            float3 nTmp, albTmp;
+            float  t = intersectPlane(planes[i], ray, nTmp, albTmp, bestRefl);
+            if (t > 0.0 && t < bestT) {
+                bestT   = t;
+                bestN   = nTmp;
+                bestAlb = albTmp;
+            }
+        }
+
+        // Spheres
+        for (uint i = 0; i < sphereCount; ++i) {
+            float3 nTmp, albTmp;
+            float  t = intersectSphere(spheres[i], ray, nTmp, albTmp, bestRefl);
+            if (t > 0.0 && t < bestT) {
+                bestT   = t;
+                bestN   = nTmp;
+                bestAlb = albTmp;
+            }
+        }
+
+        if (bestT > 1e19) {
+            float  tt  = 0.5*(normalize(ray.dir).y + 1.0);
+            float3 sky = mix(float3(1.0), float3(0.5, 0.7, 1.0), tt);
+            L += throughput * sky;
+            break;
+        }
+
+        float p = rand01(st);
+        if (p < bestRefl) {
+            // perfect reflection
+            float3 P = ray.origin + bestT * ray.dir;
+            ray.origin = P + 0.001 * bestN;
+            ray.dir    = reflectDir(ray.dir, bestN);
+            throughput *= bestRefl;
+            continue;
+        }
+        else {
+            // diffuse bounce
+            float3 P = ray.origin + bestT * ray.dir;
+            ray.origin = P + 0.001 * bestN;
+            ray.dir    = randomHemisphere(bestN, st);
+            throughput *= bestAlb;
+            continue;
         }
     }
-    // Planes → green
-    for (uint i = 0; i < planeCount; ++i) {
-        float t = hitPlane(planes[i], r);
-        if (t > 0.0 && t < tMin) {
-            tMin      = t;
-            hitNormal = normalize(planes[i].normal);
-            baseColor = float3(0,1,0);
-        }
-    }
-    // Spheres → blue
-    for (uint i = 0; i < sphereCount; ++i) {
-        float t = hitSphere(spheres[i], r);
-        if (t > 0.0 && t < tMin) {
-            tMin      = t;
-            // normal at hit point
-            float3 P   = r.origin + t * r.dir;
-            hitNormal  = normalize(P - spheres[i].center);
-            baseColor  = float3(0,0,1);
-        }
-    }
 
-    float3 col;
-    if (tMin < 1e19) {
-        // compute Blinn–Phong
-        float NdotL = max(dot(hitNormal, lightDir), 0.0);
-        float3  H   = normalize(lightDir + viewDir);
-        float NdotH = max(dot(hitNormal, H), 0.0);
-        float3 diffuse = NdotL * baseColor;
-        float3 spec    = pow(NdotH, shininess) * float3(1.0); // white highlight
+    // read & accumulate frame‐to‐frame
+    float4 prev = (frameIndex>0) ? outTex.read(gid) : float4(0);
+    float4 curr = float4(L,1.0);
+    float4 accum= (prev*float(frameIndex) + curr)/float(frameIndex+1);
 
-        col = ambientLC * baseColor + diffuse + spec;
-    } else {
-        // background gradient
-        float3 dirn = normalize(r.dir);
-        float t2 = 0.5 * (dirn.y + 1.0);
-        col = mix(float3(1.0), float3(0.5, 0.7, 1.0), t2);
-    }
-
-    outTex.write(float4(col, 1.0), gid);
+    outTex.write(accum, gid);
 }
 
 // Vertex→fragment struct

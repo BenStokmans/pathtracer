@@ -1,6 +1,31 @@
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/QuartzCore.h>
+#include "Renderer.h"
+
+
+// store these in file‐scope:
+CVDisplayLinkRef    gDisplayLink = nullptr;
+Renderer           *gRenderer    = nullptr;
+CA::MetalLayer     *gLayer       = nullptr;
+
+
+static CVReturn DisplayLinkCallback( CVDisplayLinkRef dl,
+                                     const CVTimeStamp* now,
+                                     const CVTimeStamp* outputTime,
+                                     CVOptionFlags flagsIn,
+                                     CVOptionFlags* flagsOut,
+                                     void* userInfo )
+{
+    @autoreleasepool {
+        // draw on the main queue—dispatch back if needed
+        dispatch_async(dispatch_get_main_queue(), ^{
+            gRenderer->draw(gLayer);
+        });
+    }
+    return kCVReturnSuccess;
+}
 
 // Global variables to store window and layer
 static NSWindow* g_window = nil;
@@ -49,6 +74,13 @@ void runApp() {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     [NSApp activateIgnoringOtherApps:YES];
+
+    CVDisplayLinkCreateWithActiveCGDisplays(&gDisplayLink);
+    CVDisplayLinkSetOutputCallback(gDisplayLink,
+                                   &DisplayLinkCallback,
+                                   nullptr);
+    CVDisplayLinkStart(gDisplayLink);
+
     [NSApp run];
 }
 

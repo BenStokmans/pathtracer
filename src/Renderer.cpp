@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include "Primitives/ScenePrimitives.h"
 
 #include <iostream>
 
@@ -65,8 +66,6 @@ void Renderer::draw(CA::MetalLayer *layer) {
     auto encoder = cmdBuf->computeCommandEncoder();
     encoder->setComputePipelineState(_computePipeline);
     encoder->setTexture(_outputTexture, 0);
-    encoder->setBytes(&_frameIndex, sizeof(_frameIndex), 0);
-
     // bind triangles
     encoder->setBuffer(_triangleBuffer, 0, 1);
     encoder->setBytes(&_triangleCount, sizeof(_triangleCount), 2);
@@ -76,6 +75,8 @@ void Renderer::draw(CA::MetalLayer *layer) {
     // bind spheres
     encoder->setBuffer(_sphereBuffer, 0, 5);
     encoder->setBytes(&_sphereCount, sizeof(_sphereCount), 6);
+
+    encoder->setBytes(&_frameIndex, sizeof(_frameIndex), 7);
 
     MTL::Size threadsPerThreadgroup(8,8,1);
     MTL::Size grid(WINDOW_WIDTH, WINDOW_HEIGHT,1);
@@ -101,8 +102,9 @@ void Renderer::draw(CA::MetalLayer *layer) {
     re->drawPrimitives(
         MTL::PrimitiveTypeTriangleStrip,
         static_cast<NS::UInteger>(0),
-        static_cast<NS::UInteger>(4)
-    );    re->endEncoding();
+        4
+    );
+    re->endEncoding();
 
     cmdBuf->presentDrawable(drawable);
     cmdBuf->commit();
@@ -111,45 +113,42 @@ void Renderer::draw(CA::MetalLayer *layer) {
 }
 
 void Renderer::setupScene() {
-    struct CPU_Tri {
-        simd::float3 v0;
-        simd::float3 v1;
-        simd::float3 v2;
-    };
-    struct CPU_Pln {
-            simd::float3 normal;
-            float d;
-    };
+    using Tri = SceneTriangle;
+    using Pln = ScenePlane;
+    using Sph = SceneSphere;
 
-    struct CPU_Sph {
-        simd::float3 center;
-        float radius;
+    std::vector<Tri> tris = {
+        { {-0.5f,0, -1}, {0.5f,0,-1}, {0,1,-1},
+          {1,0,0}, 0.2f }
     };
-
-    const std::vector<CPU_Tri> tris = {
-        { { -0.5, 0.0, -1.0 }, { 0.5, 0.0, -1.0 }, { 0.0, 1.0, -1.0 } }
+    std::vector<Pln> plns = {
+        { {0,1,0}, 1.0f,
+          {0,1,0}, 0.3f }
     };
-    const std::vector<CPU_Pln> plns = {
-        { {0,1,0}, 1.0f }   // plane y = -1 (n=(0,1,0), d=+1)
+    std::vector<Sph> sphs = {
+        { {1.0f,0.5f,-2}, 0.5f,
+          {0,0,1}, 0.3f }
     };
 
-    std::vector<CPU_Sph> sphs = {
-        {{1.0f, 0.5f, -2.0f}, 0.5f}
-    };
+    _triangleCount = tris.size();
+    _planeCount    = plns.size();
+    _sphereCount   = sphs.size();
 
-    _triangleCount = static_cast<uint32_t>(tris.size());
-    _planeCount    = static_cast<uint32_t>(plns.size());
-    _sphereCount   = static_cast<uint32_t>(sphs.size());
+    _triangleBuffer = _device->newBuffer(
+        tris.size() * sizeof(Tri),
+        MTL::ResourceStorageModeShared
+    );
+    memcpy(_triangleBuffer->contents(), tris.data(), tris.size()*sizeof(Tri));
 
-    _triangleBuffer = _device->newBuffer(tris.size()*sizeof(CPU_Tri),
-                                         MTL::ResourceStorageModeShared);
-    memcpy(_triangleBuffer->contents(), tris.data(), tris.size()*sizeof(CPU_Tri));
+    _planeBuffer = _device->newBuffer(
+        plns.size() * sizeof(Pln),
+        MTL::ResourceStorageModeShared
+    );
+    memcpy(_planeBuffer->contents(), plns.data(), plns.size()*sizeof(Pln));
 
-    _planeBuffer = _device->newBuffer(plns.size()*sizeof(CPU_Pln),
-                                      MTL::ResourceStorageModeShared);
-    memcpy(_planeBuffer->contents(), plns.data(), plns.size()*sizeof(CPU_Pln));
-
-    _sphereBuffer = _device->newBuffer(sphs.size()*sizeof(CPU_Sph),
-                                      MTL::ResourceStorageModeShared);
-    memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size()*sizeof(CPU_Sph));
+    _sphereBuffer = _device->newBuffer(
+        sphs.size() * sizeof(Sph),
+        MTL::ResourceStorageModeShared
+    );
+    memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size()*sizeof(Sph));
 }

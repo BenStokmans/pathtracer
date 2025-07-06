@@ -11,6 +11,9 @@ extern "C" void* createWindow(int width, int height, const char* title);
 extern "C" void* getMetalLayer(void* window);
 extern "C" void showWindow(void* window);
 extern "C" void runApp();
+extern Renderer*      gRenderer;
+extern CA::MetalLayer* gLayer;
+
 
 int main(int argc, char *argv[]) {
     NS::AutoreleasePool* pAutoreleasePool = NS::AutoreleasePool::alloc()->init();
@@ -27,8 +30,10 @@ int main(int argc, char *argv[]) {
     auto* layer = static_cast<CA::MetalLayer*>(metalLayer);
     layer->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
     layer->setFramebufferOnly(true);
-    renderer->draw(layer);
-    
+
+    gRenderer = renderer;
+    gLayer =  static_cast<CA::MetalLayer*>(metalLayer);
+
     // Show window and run app
     showWindow(window);
     runApp();
