@@ -15,7 +15,7 @@ Renderer::Renderer(MTL::Device *device) : _device(device) {
     _lastFpsTime = std::chrono::high_resolution_clock::now();
     _lastUpdate = std::chrono::high_resolution_clock::now();
     setupPipeline();
-    setupTexture();
+    setupOutputTexture();
     setupScene();
 }
 
@@ -42,7 +42,7 @@ void Renderer::setupPipeline() {
     _quadSampler = _device->newSamplerState(sd);
 }
 
-void Renderer::setupTexture() {
+void Renderer::setupOutputTexture() {
     auto desc = MTL::TextureDescriptor::texture2DDescriptor(
         MTL::PixelFormatRGBA32Float,
         WINDOW_WIDTH, WINDOW_HEIGHT,
@@ -61,6 +61,7 @@ void Renderer::setupTexture() {
     cmdBuf->commit();
     cmdBuf->waitUntilCompleted();
 }
+
 
 void Renderer::draw(CA::MetalLayer *layer) {
     // compute delta‐time
@@ -170,6 +171,11 @@ void Renderer::draw(CA::MetalLayer *layer) {
         // reset
         _framesSinceLastFps = 0;
         _lastFpsTime = now;
+    }
+
+    bool inCooldown = (now - _move.lastInteraction) < std::chrono::milliseconds(100);
+    if (!inCooldown) {
+        _frameIndex++;
     }
 
     _frameIndex++;

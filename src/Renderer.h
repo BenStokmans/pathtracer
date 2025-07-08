@@ -14,10 +14,6 @@ public:
 
     void resetCamera();
 
-    void keyEvent(uint16_t key);
-
-    void mouseEvent(double dx, double dy);
-
     MovementHandler &movement() { return _move; }
 
 private:
@@ -37,11 +33,13 @@ private:
     MTL::Buffer *_materialBuffer;
     uint32_t _materialCount;
 
+    std::vector<MTL::Texture *> _textures;
+
     uint32_t _frameIndex = 0;
 
     void setupPipeline();
 
-    void setupTexture();
+    void setupOutputTexture();
 
     void setupScene();
 
@@ -55,7 +53,6 @@ private:
 
     MovementHandler _move;
     std::chrono::high_resolution_clock::time_point _lastUpdate;
-
 
     std::chrono::high_resolution_clock::time_point _lastFpsTime;
     uint32_t _framesSinceLastFps = 0;

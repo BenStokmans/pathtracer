@@ -19,11 +19,12 @@ void MovementHandler::keyUp(const uint16_t key) {
 
 void MovementHandler::mouseMove(const double dx, const double dy) {
     _yaw -= static_cast<float>(dx) * _sens;
-    _pitch += static_cast<float>(dy) * _sens;
+    _pitch -= static_cast<float>(dy) * _sens;
     // clamp pitch to avoid gimbal
     if (_pitch > PI_2 - 0.01f) _pitch = PI_2 - 0.01f;
     if (_pitch < -PI_2 + 0.01f) _pitch = -PI_2 + 0.01f;
     _moved = true;
+    lastInteraction = std::chrono::high_resolution_clock::now();
 }
 
 void MovementHandler::update(float dt) {

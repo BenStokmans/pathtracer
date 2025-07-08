@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <simd/simd.h>
 #include <unordered_map>
 
@@ -16,10 +17,14 @@ public:
 
     void mouseMove(double dx, double dy);
 
+    std::chrono::high_resolution_clock::time_point lastInteraction{std::chrono::high_resolution_clock::now()};
+
     // Call once per frame with elapsed seconds
     void update(float dt);
 
-    bool hasMoved() const { return _moved; }
+    bool hasMoved() const {
+        return _moved;
+    }
 
     void resetMoved() {
         _moved = false;
@@ -41,6 +46,8 @@ private:
     const float _accel = 50.0f; // world‐units per second²
     const float _damp = 8.0f; // damping per second
     const float _sens = 0.002f; // radians per pixel
+
+    static constexpr auto kInteractionCooldown = std::chrono::milliseconds(100);
 };
 
 
