@@ -177,8 +177,6 @@ void Renderer::draw(CA::MetalLayer *layer) {
     if (!inCooldown) {
         _frameIndex++;
     }
-
-    _frameIndex++;
 }
 
 void Renderer::setupScene() {
