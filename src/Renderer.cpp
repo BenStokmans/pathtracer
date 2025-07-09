@@ -4,11 +4,10 @@
 #include <iostream>
 #include "Config.h"
 #include <vector>
+#include <numbers>
 
 #include "Camera.h"
 #include "Material.h"
-
-static constexpr float PI_F = 3.14159265358979323846f; // Define PI constant
 
 Renderer::Renderer(MTL::Device *device) : _device(device) {
     _cmdQueue = _device->newCommandQueue();
@@ -53,7 +52,7 @@ void Renderer::setupOutputTexture() {
     auto cmdBuf = _cmdQueue->commandBuffer();
     auto blit = cmdBuf->blitCommandEncoder();
     MTL::Region full = MTL::Region::Make2D(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
-    std::vector<float> zero(WINDOW_WIDTH * WINDOW_HEIGHT * 4, 0.0f);
+    std::vector zero(WINDOW_WIDTH * WINDOW_HEIGHT * 4, 0.0f);
     _outputTexture->replaceRegion(
         full, 0, zero.data(), WINDOW_WIDTH * 4 * sizeof(float)
     );
@@ -108,7 +107,7 @@ void Renderer::draw(CA::MetalLayer *layer) {
     encoder->setBytes(&_materialCount, sizeof(_materialCount), 9);
 
     float aspect = static_cast<float>(WINDOW_WIDTH) / WINDOW_HEIGHT;
-    float theta = _fov * (PI_F / 180.0f);
+    float theta = _fov * (std::numbers::pi_v<float> / 180.0f);
     float halfH = tan(theta * 0.5f);
     float halfW = aspect * halfH;
 
@@ -164,8 +163,7 @@ void Renderer::draw(CA::MetalLayer *layer) {
 
     // check if one second has elapsed
     now = std::chrono::high_resolution_clock::now();
-    auto elapsed = std::chrono::duration<double>(now - _lastFpsTime).count();
-    if (elapsed >= 1.0) {
+    if (auto elapsed = std::chrono::duration<double>(now - _lastFpsTime).count(); elapsed >= 1.0) {
         double fps = static_cast<double>(_framesSinceLastFps) / elapsed;
         std::cout << "FPS: " << fps << std::endl;
         // reset
@@ -212,8 +210,10 @@ void Renderer::setupScene() {
     using Tri = SceneTriangle;
     std::vector<Tri> tris;
     float yL = 1.9f; // just below the ceiling
-    float x0 = -0.5f, x1 = 0.5f;
-    float z0 = -2.0f, z1 = -1.0f;
+    float x0 = -0.5f;
+    float x1 = 0.5f;
+    float z0 = -2.0f;
+    float z1 = -1.0f;
     tris.push_back({{x0, yL, z0}, {x1, yL, z0}, {x1, yL, z1}, 0});
     tris.push_back({{x1, yL, z1}, {x0, yL, z1}, {x0, yL, z0}, 0});
 
@@ -261,11 +261,6 @@ void Renderer::setupScene() {
     memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size() * sizeof(Sph));
 }
 
-void Renderer::resetCamera() {
-    _camPos = {0, 1, 3};
-    _yaw = 3.14159265f;
-    _pitch = 0.0f;
-}
 
 void Renderer::clearAccumulation() {
     // reset our sample counter

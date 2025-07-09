@@ -4,12 +4,21 @@
 #pragma once
 
 #include <chrono>
+#include <numbers>
 #include <simd/simd.h>
 #include <unordered_map>
 
 class MovementHandler {
 public:
     MovementHandler();
+
+    void resetCamera() {
+        _camPos = {0, 1, 3};
+        _yaw = std::numbers::pi_v<float>;
+        _pitch = 0.0f;
+        _velocity = {0, 0, 0};
+        _moved = false;
+    }
 
     void keyDown(uint16_t key);
 
@@ -38,7 +47,8 @@ public:
 private:
     std::unordered_map<uint16_t, bool> _keys;
     simd::float3 _camPos;
-    float _yaw, _pitch;
+    float _yaw;
+    float _pitch;
     simd::float3 _velocity;
     bool _moved = false;
 

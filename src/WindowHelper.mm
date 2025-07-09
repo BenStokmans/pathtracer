@@ -98,6 +98,10 @@ void runApp() {
       unichar key = [[ev charactersIgnoringModifiers] characterAtIndex:0];
       switch(key) {
         case 'q': [NSApp terminate:nil]; return nil;
+         case 'r': {
+          gMovement->resetCamera();
+          return nil;
+          }
         default:
           gMovement->keyDown(key);
           return nil;
