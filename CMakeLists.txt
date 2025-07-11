@@ -7,12 +7,29 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Add metal-cpp headers
 include_directories(${PROJECT_SOURCE_DIR}/include/metal-cpp)
 
+# Include ImGui headers
+include_directories(${PROJECT_SOURCE_DIR}/include/imgui)
+include_directories(${PROJECT_SOURCE_DIR}/include/imgui/backends)
+
 # Collect source files
 file(GLOB CPP_SOURCES src/*.cpp src/*.h)
 file(GLOB MM_SOURCES src/*.mm)
 
+# Add ImGui source files
+set(IMGUI_SOURCES
+    ${PROJECT_SOURCE_DIR}/include/imgui/imgui.cpp
+    ${PROJECT_SOURCE_DIR}/include/imgui/imgui_demo.cpp
+    ${PROJECT_SOURCE_DIR}/include/imgui/imgui_draw.cpp
+    ${PROJECT_SOURCE_DIR}/include/imgui/imgui_tables.cpp
+    ${PROJECT_SOURCE_DIR}/include/imgui/imgui_widgets.cpp
+    ${PROJECT_SOURCE_DIR}/include/imgui/backends/imgui_impl_metal.mm
+)
+
 # Create executable
-add_executable(pathtracer ${CPP_SOURCES} ${MM_SOURCES})
+add_executable(pathtracer ${CPP_SOURCES} ${MM_SOURCES} ${IMGUI_SOURCES})
+
+# Set compile definitions for ImGui Metal C++ support
+target_compile_definitions(pathtracer PRIVATE IMGUI_IMPL_METAL_CPP)
 
 # Find required frameworks
 find_library(METAL Metal REQUIRED)
