@@ -1,3 +1,6 @@
 [submodule "include/metal-cpp"]
 	path = include/metal-cpp
 	url = https://github.com/bkaradzic/metal-cpp.git
+[submodule "include/imgui"]
+	path = include/imgui
+	url = https://github.com/ocornut/imgui.git

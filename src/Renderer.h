@@ -23,6 +23,7 @@ private:
     MTL::ComputePipelineState *_computePipeline;
     MTL::RenderPipelineState *_quadPipeline;
     MTL::SamplerState *_quadSampler;
+    
 
     MTL::Buffer *_triangleBuffer;
     uint32_t _triangleCount;
@@ -38,6 +39,7 @@ private:
     uint32_t _frameIndex = 0;
 
     void setupPipeline();
+    void setupImgui();
 
     void setupOutputTexture();
 

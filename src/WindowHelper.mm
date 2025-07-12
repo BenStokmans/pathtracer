@@ -3,6 +3,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/QuartzCore.h>
 #include "Renderer.h"
+#include "imgui.h"
 
 
 // store these in file‐scope:
@@ -10,6 +11,22 @@ CVDisplayLinkRef    gDisplayLink = nullptr;
 Renderer           *gRenderer    = nullptr;
 CA::MetalLayer     *gLayer       = nullptr;
 MovementHandler    *gMovement = nullptr;
+
+// Track cursor state and ImGui window visibility
+static bool gImGuiWindowVisible = false;
+
+void toggleImGuiWindow() {
+    gImGuiWindowVisible = !gImGuiWindowVisible;
+    
+    // Update cursor state immediately when toggling
+    if (gImGuiWindowVisible) {
+        CGDisplayShowCursor(kCGDirectMainDisplay);
+        CGAssociateMouseAndMouseCursorPosition(true);
+    } else if (!gImGuiWindowVisible) {
+        CGDisplayHideCursor(kCGDirectMainDisplay);
+        CGAssociateMouseAndMouseCursorPosition(false);
+    }
+}
 
 
 static CVReturn DisplayLinkCallback( CVDisplayLinkRef dl,
@@ -33,6 +50,10 @@ static NSWindow* g_window = nil;
 static CAMetalLayer* g_metalLayer = nil;
 
 extern "C" {
+
+bool isImGuiWindowVisible() {
+    return gImGuiWindowVisible;
+}
 
 void* createWindow(int width, int height, const char* title) {
     NSRect frame = NSMakeRect(0, 0, width, height);
@@ -96,14 +117,24 @@ void runApp() {
     // key down
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent*(NSEvent* ev) {
       unichar key = [[ev charactersIgnoringModifiers] characterAtIndex:0];
+      
+      // Check for F1 key (NSF1FunctionKey)
+      if ([ev keyCode] == 122) { // F1 key code
+          toggleImGuiWindow();
+          return nil;
+      }
+      
       switch(key) {
         case 'q': [NSApp terminate:nil]; return nil;
-         case 'r': {
+        case 'r': {
           gMovement->resetCamera();
           return nil;
-          }
+        }
         default:
-          gMovement->keyDown(key);
+          // Only pass to movement handler if ImGui window is not visible
+          if (!gImGuiWindowVisible) {
+              gMovement->keyDown(key);
+          }
           return nil;
       }
     }];
@@ -111,19 +142,80 @@ void runApp() {
     // key up
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyUp handler:^NSEvent*(NSEvent* ev) {
       unichar key = [[ev charactersIgnoringModifiers] characterAtIndex:0];
-      gMovement->keyUp(key);
+      
+      // Only pass to movement handler if ImGui window is not visible
+      if (!gImGuiWindowVisible) {
+          gMovement->keyUp(key);
+      }
       return nil;
     }];
 
     // mouse move
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved handler:^NSEvent*(NSEvent* ev) {
-      gMovement->mouseMove(ev.deltaX, ev.deltaY);
+      // Only update ImGui IO and handle mouse if ImGui window is visible
+      if (gImGuiWindowVisible) {
+          ImGuiIO& io = ImGui::GetIO();
+          
+          // Update mouse position for ImGui
+          NSPoint mouseLocation = [g_window mouseLocationOutsideOfEventStream];
+          NSRect contentRect = [[g_window contentView] frame];
+          
+          // Convert to ImGui coordinates (top-left origin)
+          float mouseX = mouseLocation.x;
+          float mouseY = contentRect.size.height - mouseLocation.y;
+          
+          io.MousePos = ImVec2(mouseX, mouseY);
+      } else {
+          // Pass to movement handler when ImGui window is not visible
+          gMovement->mouseMove(ev.deltaX, ev.deltaY);
+      }
       return nil;
     }];
 
-    // Hide the OS cursor
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent*(NSEvent* ev) {
+      if (gImGuiWindowVisible) {
+          ImGuiIO& io = ImGui::GetIO();
+          io.MouseDown[0] = true;
+      }
+      return nil;
+    }];
+
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseUp handler:^NSEvent*(NSEvent* ev) {
+      if (gImGuiWindowVisible) {
+          ImGuiIO& io = ImGui::GetIO();
+          io.MouseDown[0] = false;
+      }
+      return nil;
+    }];
+
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown handler:^NSEvent*(NSEvent* ev) {
+      if (gImGuiWindowVisible) {
+          ImGuiIO& io = ImGui::GetIO();
+          io.MouseDown[1] = true;
+      }
+      return nil;
+    }];
+
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseUp handler:^NSEvent*(NSEvent* ev) {
+      if (gImGuiWindowVisible) {
+          ImGuiIO& io = ImGui::GetIO();
+          io.MouseDown[1] = false;
+      }
+      return nil;
+    }];
+
+    // Add scroll wheel handler
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel handler:^NSEvent*(NSEvent* ev) {
+      if (gImGuiWindowVisible) {
+          ImGuiIO& io = ImGui::GetIO();
+          io.MouseWheelH += [ev scrollingDeltaX] * 0.1f;
+          io.MouseWheel += [ev scrollingDeltaY] * 0.1f;
+      }
+      return nil;
+    }];
+
+    // Initially hide cursor for camera movement (ImGui window starts hidden)
     CGDisplayHideCursor(kCGDirectMainDisplay);
-    // Let us control the cursor position independently
     CGAssociateMouseAndMouseCursorPosition(false);
 
     [NSApp run];

@@ -9,13 +9,31 @@
 #include "Camera.h"
 #include "Material.h"
 
+#include "imgui.h"
+#include "imgui_impl_metal.h"
+
+// Forward declaration for window helper function
+extern "C" bool isImGuiWindowVisible();
+
 Renderer::Renderer(MTL::Device *device) : _device(device) {
     _cmdQueue = _device->newCommandQueue();
     _lastFpsTime = std::chrono::high_resolution_clock::now();
     _lastUpdate = std::chrono::high_resolution_clock::now();
     setupPipeline();
+    setupImgui();
     setupOutputTexture();
     setupScene();
+}
+
+void Renderer::setupImgui() {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+    ImGui::StyleColorsDark();
+    ImGui_ImplMetal_Init(_device);
 }
 
 void Renderer::setupPipeline() {
@@ -39,6 +57,8 @@ void Renderer::setupPipeline() {
     sd->setMinFilter(MTL::SamplerMinMagFilterNearest);
     sd->setMagFilter(MTL::SamplerMinMagFilterNearest);
     _quadSampler = _device->newSamplerState(sd);
+
+
 }
 
 void Renderer::setupOutputTexture() {
@@ -52,7 +72,7 @@ void Renderer::setupOutputTexture() {
     auto cmdBuf = _cmdQueue->commandBuffer();
     auto blit = cmdBuf->blitCommandEncoder();
     MTL::Region full = MTL::Region::Make2D(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
-    std::vector zero(WINDOW_WIDTH * WINDOW_HEIGHT * 4, 0.0f);
+    std::vector<float> zero(WINDOW_WIDTH * WINDOW_HEIGHT * 4, 0.0f);
     _outputTexture->replaceRegion(
         full, 0, zero.data(), WINDOW_WIDTH * 4 * sizeof(float)
     );
@@ -63,6 +83,12 @@ void Renderer::setupOutputTexture() {
 
 
 void Renderer::draw(CA::MetalLayer *layer) {
+    ImGuiIO& io = ImGui::GetIO();
+
+    auto size = layer->drawableSize();
+    io.DisplaySize.x = size.width;
+    io.DisplaySize.y = size.height;
+
     // compute delta‐time
     auto now = std::chrono::high_resolution_clock::now();
     float dt = std::chrono::duration<float>(now - _lastUpdate).count();
@@ -154,6 +180,21 @@ void Renderer::draw(CA::MetalLayer *layer) {
         static_cast<NS::UInteger>(0),
         4
     );
+
+
+    ImGui_ImplMetal_NewFrame(rpd);
+    ImGui::NewFrame();
+    
+    // Only show ImGui windows if the global toggle is enabled
+    if (isImGuiWindowVisible()) {
+        ImGui::ShowDemoWindow();
+    }
+    
+    ImGui::Render();
+    ImDrawData* draw_data = ImGui::GetDrawData();
+
+    ImGui_ImplMetal_RenderDrawData(draw_data, cmdBuf, re);
+
     re->endEncoding();
 
     cmdBuf->presentDrawable(drawable);
