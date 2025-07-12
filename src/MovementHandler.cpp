@@ -46,6 +46,8 @@ void MovementHandler::update(float dt) {
     if (_keys['s']) accel -= forward;
     if (_keys['a']) accel -= right;
     if (_keys['d']) accel += right;
+    if (_keys[' ']) accel += worldUp;
+    if (_keys['c']) accel -= worldUp;
 
     // integrate velocity & position
     _velocity += accel * (_accel * dt);
