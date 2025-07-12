@@ -7,7 +7,7 @@
 using namespace metal;
 
 // maximum bounces per sample
-#define MAX_BOUNCES 8
+#define MAX_BOUNCES 20
 
 kernel void path_trace(
     texture2d<float, access::read_write> outTex   [[texture(0)]],
@@ -92,6 +92,17 @@ kernel void path_trace(
 
         L += throughput * mat.emission;
 
+        // Russian roulette termination after 4 bounces
+        if (bounce >= 4) {
+            // probability of survival = max RGB throughput, clamped to [0.05,1]
+            float p_rr = max(max(throughput.x, throughput.y), throughput.z);
+            p_rr = clamp(p_rr, 0.05, 1.0);
+            if (rand01(st) > p_rr) {
+                break;
+            }
+            throughput /= p_rr;
+        }
+
         // compute cosine of incidence
         float cosI = dot(ray.dir, bestN);
         bool entering = cosI < 0.0;
@@ -108,34 +119,30 @@ kernel void path_trace(
             float F0 = pow((eta_i - eta_t)/(eta_i + eta_t), 2.0);
             float R  = fresnelSchlick(fabs(cosI), F0);
 
-            // sample reflect vs refract
             if (rand01(st) < R) {
                 // reflect
-                ray.origin = P + N * 0.001;
-                ray.dir    = reflect(ray.dir, N);
-                throughput *= R;       // attenuate by reflectance
+                ray.origin = P + N*0.001;
+                ray.dir    = reflectDir(ray.dir,N);
             } else {
                 // refract
-                float3 T = refractDir(ray.dir, N, eta);
-                ray.origin = P - N * 0.001; // move *into* the surface
-                ray.dir    = T;
-                throughput *= (1.0 - R);   // attenuate by transmittance
+                ray.origin = P - N*0.001;
+                ray.dir    = refractDir(ray.dir,N,eta);
             }
             continue;
         }
 
-        // otherwise fall back to your old metallic/diffuse mix:
-        float p = rand01(st);
-        if (p < mat.reflectivity) {
-            // metallic reflect
-            ray.origin = P + bestN * 0.001;
-            ray.dir    = reflect(ray.dir, bestN);
-            throughput *= mat.reflectivity;
+        float p_spec = mat.reflectivity;
+        float p_diff = 1.0 - p_spec;
+        float u_b    = rand01(st);
+
+        if (u_b < p_spec) {
+            ray.origin  = P + bestN * 0.001;
+            ray.dir     = reflectDir(ray.dir, bestN);
+            throughput *= (1.0 / p_spec);
         } else {
-            // diffuse dome
-            ray.origin = P + bestN * 0.001;
-            ray.dir    = randomHemisphere(bestN, st);
-            throughput *= mat.albedo * (1.0 - mat.reflectivity);
+            ray.origin  = P + bestN * 0.001;
+            ray.dir     = randomHemisphere(bestN, st);
+            throughput *= mat.albedo / p_diff;
         }
     }
 
