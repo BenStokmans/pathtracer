@@ -19,27 +19,28 @@ public:
 private:
     MTL::Device *_device;
     MTL::CommandQueue *_cmdQueue;
-    MTL::Texture *_outputTexture;
-    MTL::ComputePipelineState *_computePipeline;
-    MTL::RenderPipelineState *_quadPipeline;
-    MTL::SamplerState *_quadSampler;
-    
+    MTL::Texture *_outputTexture{};
+    MTL::ComputePipelineState *_computePipeline{};
+    MTL::RenderPipelineState *_quadPipeline{};
+    MTL::SamplerState *_quadSampler{};
 
-    MTL::Buffer *_triangleBuffer;
-    uint32_t _triangleCount;
-    MTL::Buffer *_planeBuffer;
-    uint32_t _planeCount;
-    MTL::Buffer *_sphereBuffer;
-    uint32_t _sphereCount;
-    MTL::Buffer *_materialBuffer;
-    uint32_t _materialCount;
+
+    MTL::Buffer *_triangleBuffer{};
+    uint32_t _triangleCount{};
+    MTL::Buffer *_planeBuffer{};
+    uint32_t _planeCount{};
+    MTL::Buffer *_sphereBuffer{};
+    uint32_t _sphereCount{};
+    MTL::Buffer *_materialBuffer{};
+    uint32_t _materialCount{};
 
     std::vector<MTL::Texture *> _textures;
 
     uint32_t _frameIndex = 0;
 
     void setupPipeline();
-    void setupImgui();
+
+    void setupImgui() const;
 
     void setupOutputTexture();
 

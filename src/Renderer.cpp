@@ -1,5 +1,5 @@
 #include "Renderer.h"
-#include "Primitives/ScenePrimitives.h"
+#include "Primitives/Primitives.h"
 
 #include <iostream>
 #include "Config.h"
@@ -11,6 +11,8 @@
 
 #include "imgui.h"
 #include "imgui_impl_metal.h"
+#include "Object.h"
+#include "ObjLoader.h"
 
 // Forward declaration for window helper function
 extern "C" bool isImGuiWindowVisible();
@@ -25,54 +27,53 @@ Renderer::Renderer(MTL::Device *device) : _device(device) {
     setupScene();
 }
 
-void Renderer::setupImgui() {
+void Renderer::setupImgui() const {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+    ImGuiIO &io = ImGui::GetIO();
+    (void) io;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; // Enable Gamepad Controls
 
     ImGui::StyleColorsDark();
     ImGui_ImplMetal_Init(_device);
 }
 
 void Renderer::setupPipeline() {
-    auto lib = _device->newDefaultLibrary();
+    const auto lib = _device->newDefaultLibrary();
     // compute pipeline
-    auto comp = lib->newFunction(NS::String::string("path_trace", NS::UTF8StringEncoding));
+    const auto comp = lib->newFunction(NS::String::string("path_trace", NS::UTF8StringEncoding));
     NS::Error *error = nullptr;
     _computePipeline = _device->newComputePipelineState(comp, &error);
 
     // display pipeline (fullscreen quad)
-    auto vfn = lib->newFunction(NS::String::string("quad_vert", NS::UTF8StringEncoding));
-    auto ffn = lib->newFunction(NS::String::string("quad_frag", NS::UTF8StringEncoding));
-    auto pd = MTL::RenderPipelineDescriptor::alloc()->init();
+    const auto vfn = lib->newFunction(NS::String::string("quad_vert", NS::UTF8StringEncoding));
+    const auto ffn = lib->newFunction(NS::String::string("quad_frag", NS::UTF8StringEncoding));
+    const auto pd = MTL::RenderPipelineDescriptor::alloc()->init();
     pd->setVertexFunction(vfn);
     pd->setFragmentFunction(ffn);
     pd->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatBGRA8Unorm);
     _quadPipeline = _device->newRenderPipelineState(pd, &error);
 
     // sampler for the quad pass
-    auto sd = MTL::SamplerDescriptor::alloc()->init();
+    const auto sd = MTL::SamplerDescriptor::alloc()->init();
     sd->setMinFilter(MTL::SamplerMinMagFilterNearest);
     sd->setMagFilter(MTL::SamplerMinMagFilterNearest);
     _quadSampler = _device->newSamplerState(sd);
-
-
 }
 
 void Renderer::setupOutputTexture() {
-    auto desc = MTL::TextureDescriptor::texture2DDescriptor(
+    const auto desc = MTL::TextureDescriptor::texture2DDescriptor(
         MTL::PixelFormatRGBA32Float,
         WINDOW_WIDTH, WINDOW_HEIGHT,
         false
     );
     desc->setUsage(MTL::TextureUsageShaderWrite | MTL::TextureUsageShaderRead);
     _outputTexture = _device->newTexture(desc);
-    auto cmdBuf = _cmdQueue->commandBuffer();
-    auto blit = cmdBuf->blitCommandEncoder();
-    MTL::Region full = MTL::Region::Make2D(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
-    std::vector<float> zero(WINDOW_WIDTH * WINDOW_HEIGHT * 4, 0.0f);
+    const auto cmdBuf = _cmdQueue->commandBuffer();
+    const auto blit = cmdBuf->blitCommandEncoder();
+    const MTL::Region full = MTL::Region::Make2D(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+    const std::vector zero(WINDOW_WIDTH * WINDOW_HEIGHT * 4, 0.0f);
     _outputTexture->replaceRegion(
         full, 0, zero.data(), WINDOW_WIDTH * 4 * sizeof(float)
     );
@@ -83,15 +84,15 @@ void Renderer::setupOutputTexture() {
 
 
 void Renderer::draw(CA::MetalLayer *layer) {
-    ImGuiIO& io = ImGui::GetIO();
+    ImGuiIO &io = ImGui::GetIO();
 
-    auto size = layer->drawableSize();
-    io.DisplaySize.x = size.width;
-    io.DisplaySize.y = size.height;
+    const auto size = layer->drawableSize();
+    io.DisplaySize.x = static_cast<float>(size.width);
+    io.DisplaySize.y = static_cast<float>(size.height);
 
     // compute delta‐time
     auto now = std::chrono::high_resolution_clock::now();
-    float dt = std::chrono::duration<float>(now - _lastUpdate).count();
+    const float dt = std::chrono::duration<float>(now - _lastUpdate).count();
     _lastUpdate = now;
 
     // update camera
@@ -110,11 +111,11 @@ void Renderer::draw(CA::MetalLayer *layer) {
         clearAccumulation();
 
     // get a drawable for this frame
-    auto drawable = layer->nextDrawable();
+    const auto drawable = layer->nextDrawable();
     if (!drawable) return;
 
-    auto cmdBuf = _cmdQueue->commandBuffer();
-    auto encoder = cmdBuf->computeCommandEncoder();
+    const auto cmdBuf = _cmdQueue->commandBuffer();
+    const auto encoder = cmdBuf->computeCommandEncoder();
     encoder->setComputePipelineState(_computePipeline);
     encoder->setTexture(_outputTexture, 0);
     // bind triangles
@@ -132,8 +133,8 @@ void Renderer::draw(CA::MetalLayer *layer) {
     encoder->setBuffer(_materialBuffer, 0, 8);
     encoder->setBytes(&_materialCount, sizeof(_materialCount), 9);
 
-    float aspect = static_cast<float>(WINDOW_WIDTH) / WINDOW_HEIGHT;
-    float theta = _fov * (std::numbers::pi_v<float> / 180.0f);
+    constexpr float aspect = static_cast<float>(WINDOW_WIDTH) / WINDOW_HEIGHT;
+    const float theta = _fov * (std::numbers::pi_v<float> / 180.0f);
     float halfH = tan(theta * 0.5f);
     float halfW = aspect * halfH;
 
@@ -142,7 +143,7 @@ void Renderer::draw(CA::MetalLayer *layer) {
         sin(_pitch),
         cos(_pitch) * cos(_yaw)
     };
-    simd::float3 worldUp = simd_make_float3(0.0f, 1.0f, 0.0f);
+    const simd::float3 worldUp = simd_make_float3(0.0f, 1.0f, 0.0f);
     simd::float3 right = simd::normalize(simd::cross(front, worldUp));
     simd::float3 up = simd::cross(right, front);
 
@@ -154,9 +155,9 @@ void Renderer::draw(CA::MetalLayer *layer) {
 
     encoder->setBytes(&cam, sizeof(cam), 10);
 
-    MTL::Size threadsPerThreadgroup(8, 8, 1);
-    MTL::Size grid(WINDOW_WIDTH, WINDOW_HEIGHT, 1);
-    MTL::Size threadgroups(
+    const MTL::Size threadsPerThreadgroup(8, 8, 1);
+    const MTL::Size grid(WINDOW_WIDTH, WINDOW_HEIGHT, 1);
+    const MTL::Size threadgroups(
         (grid.width + threadsPerThreadgroup.width - 1) / threadsPerThreadgroup.width,
         (grid.height + threadsPerThreadgroup.height - 1) / threadsPerThreadgroup.height,
         1
@@ -164,13 +165,13 @@ void Renderer::draw(CA::MetalLayer *layer) {
     encoder->dispatchThreadgroups(threadgroups, threadsPerThreadgroup);
     encoder->endEncoding();
 
-    auto rpd = MTL::RenderPassDescriptor::renderPassDescriptor();
-    auto att = rpd->colorAttachments()->object(0);
+    const auto rpd = MTL::RenderPassDescriptor::renderPassDescriptor();
+    const auto att = rpd->colorAttachments()->object(0);
     att->setTexture(drawable->texture());
     att->setLoadAction(MTL::LoadActionClear);
     att->setStoreAction(MTL::StoreActionStore);
 
-    auto re = cmdBuf->renderCommandEncoder(rpd);
+    const auto re = cmdBuf->renderCommandEncoder(rpd);
     re->setRenderPipelineState(_quadPipeline);
     re->setFragmentTexture(_outputTexture, 0);
     re->setFragmentSamplerState(_quadSampler, 0);
@@ -184,14 +185,14 @@ void Renderer::draw(CA::MetalLayer *layer) {
 
     ImGui_ImplMetal_NewFrame(rpd);
     ImGui::NewFrame();
-    
+
     // Only show ImGui windows if the global toggle is enabled
     if (isImGuiWindowVisible()) {
         ImGui::ShowDemoWindow();
     }
-    
+
     ImGui::Render();
-    ImDrawData* draw_data = ImGui::GetDrawData();
+    ImDrawData *draw_data = ImGui::GetDrawData();
 
     ImGui_ImplMetal_RenderDrawData(draw_data, cmdBuf, re);
 
@@ -204,21 +205,23 @@ void Renderer::draw(CA::MetalLayer *layer) {
 
     // check if one second has elapsed
     now = std::chrono::high_resolution_clock::now();
-    if (auto elapsed = std::chrono::duration<double>(now - _lastFpsTime).count(); elapsed >= 1.0) {
-        double fps = static_cast<double>(_framesSinceLastFps) / elapsed;
+    if (const auto elapsed = std::chrono::duration<double>(now - _lastFpsTime).count(); elapsed >= 1.0) {
+        const double fps = static_cast<double>(_framesSinceLastFps) / elapsed;
         std::cout << "FPS: " << fps << std::endl;
         // reset
         _framesSinceLastFps = 0;
         _lastFpsTime = now;
     }
 
-    bool inCooldown = (now - _move.lastInteraction) < std::chrono::milliseconds(100);
+    const bool inCooldown = (now - _move.lastInteraction) < std::chrono::milliseconds(100);
     if (!inCooldown) {
         _frameIndex++;
     }
 }
 
 void Renderer::setupScene() {
+    objects.clear();
+    triangles.clear();
     //
     //  1) MATERIALS
     //
@@ -228,16 +231,17 @@ void Renderer::setupScene() {
     //  idx 3: green diffuse
     //  idx 4: mirror
     //  idx 5: glass (ior=1.5)
-    std::vector<Material> mats = {
+    const std::vector<Material> mats = {
         // albedo         emission        reflectivity  ior
         {{0, 0, 0}, {15, 15, 15}, 0.0f, 1.0f}, // 0 light
         {{0.8f, 0.8f, 0.8f}, {0, 0, 0}, 0.0f, 1.0f}, // 1 white
         {{0.8f, 0.2f, 0.2f}, {0, 0, 0}, 0.0f, 1.0f}, // 2 red
         {{0.2f, 0.8f, 0.2f}, {0, 0, 0}, 0.0f, 1.0f}, // 3 green
         {{0.9f, 0.9f, 0.9f}, {0, 0, 0}, 1.0f, 1.0f}, // 4 mirror
-        {{1.0f, 1.0f, 1.0f}, {0, 0, 0}, 0.0f, 1.5f} // 5 glass
+        {{1.0f, 1.0f, 1.0f}, {0, 0, 0}, 0.0f, 1.5f}, // 5 glass
+        {{0.2f, 0.2f, 0.8f}, {0, 0, 0}, 0.0f, 1.0f} // 6 blue
     };
-    _materialCount = (uint32_t) mats.size();
+    _materialCount = static_cast<uint32_t>(mats.size());
     _materialBuffer = _device->newBuffer(
         mats.size() * sizeof(Material),
         MTL::ResourceStorageModeShared
@@ -248,30 +252,30 @@ void Renderer::setupScene() {
     //  2) GEOMETRY
     //
     //  a) Ceiling “light panel” as two triangles (mat 0)
-    using Tri = SceneTriangle;
-    std::vector<Tri> tris;
-    float yL = 1.9f; // just below the ceiling
-    float x0 = -0.5f;
-    float x1 = 0.5f;
-    float z0 = -2.0f;
-    float z1 = -1.0f;
-    tris.push_back({{x0, yL, z0}, {x1, yL, z0}, {x1, yL, z1}, 0});
-    tris.push_back({{x1, yL, z1}, {x0, yL, z1}, {x0, yL, z0}, 0});
+    constexpr float yL = 1.9f; // just below the ceiling
+    constexpr float x0 = -0.5f;
+    constexpr float x1 = 0.5f;
+    constexpr float z0 = -2.0f;
+    constexpr float z1 = -1.0f;
+    triangles.push_back({{x0, yL, z0}, {x1, yL, z0}, {x1, yL, z1}, 0});
+    triangles.push_back({{x1, yL, z1}, {x0, yL, z1}, {x0, yL, z0}, 0});
 
     //  b) Spheres (mat 2:red, 4:mirror, 5:glass, 3:green)
-    using Sph = SceneSphere;
-    std::vector<Sph> sphs = {
+    using Sph = Sphere;
+    const std::vector<Sph> sphs = {
         {{-0.6f, 0.25f, -0.1f}, 0.25f, 2}, // small red
         {{0.0f, 0.25f, -0.2f}, 0.25f, 4}, // mirror
         {{0.6f, 0.25f, -0.3f}, 0.25f, 5}, // glass
         {{0.0f, 0.9f, -0.2f}, 0.25f, 3} // green
     };
 
+    ObjLoader::loadObj("assets/cube.obj", 6);
+
     //  c) Walls & floor & back (infinite planes, mat 1)
-    using Pln = ScenePlane;
-    std::vector<Pln> plns = {
+    using Pln = Plane;
+    const std::vector<Pln> plns = {
         // normal         d        matIndex
-        {{0, 1, 0}, 0.0f, 1}, // floor y=0
+        {{0, 1, 0}, 0.0f, 2}, // floor y=0
         {{0, -1, 0}, 2.0f, 1}, // ceiling y=2
         {{1, 0, 0}, 2.0f, 1}, // left  x=-2
         {{-1, 0, 0}, 2.0f, 1}, // right x= 2
@@ -279,15 +283,15 @@ void Renderer::setupScene() {
     };
 
     // upload
-    _triangleCount = (uint32_t) tris.size();
-    _planeCount = (uint32_t) plns.size();
-    _sphereCount = (uint32_t) sphs.size();
+    _triangleCount = static_cast<uint32_t>(triangles.size());
+    _planeCount = static_cast<uint32_t>(plns.size());
+    _sphereCount = static_cast<uint32_t>(sphs.size());
 
     _triangleBuffer = _device->newBuffer(
-        tris.size() * sizeof(Tri),
+        triangles.size() * sizeof(Triangle),
         MTL::ResourceStorageModeShared
     );
-    memcpy(_triangleBuffer->contents(), tris.data(), tris.size() * sizeof(Tri));
+    memcpy(_triangleBuffer->contents(), triangles.data(), triangles.size() * sizeof(Triangle));
 
     _planeBuffer = _device->newBuffer(
         plns.size() * sizeof(Pln),

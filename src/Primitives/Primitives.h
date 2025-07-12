@@ -2,25 +2,24 @@
 #define SCENEPRIMITIVES_H
 
 #pragma once
-#include <simd/simd.h>
 
-struct SceneTriangle {
+struct Triangle {
     simd::float3 v0;
     simd::float3 v1;
     simd::float3 v2;
-    uint32_t     matIndex;
+    uint32_t matIndex;
 };
 
-struct ScenePlane {
+struct Plane {
     simd::float3 normal;
-    float        d;
-    uint32_t     matIndex;
+    float d;
+    uint32_t matIndex;
 };
 
-struct SceneSphere {
+struct Sphere {
     simd::float3 center;
-    float        radius;
-    uint32_t     matIndex;
+    float radius;
+    uint32_t matIndex;
 };
 
 #endif //SCENEPRIMITIVES_H

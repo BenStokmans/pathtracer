@@ -17,12 +17,12 @@ file(GLOB MM_SOURCES src/*.mm)
 
 # Add ImGui source files
 set(IMGUI_SOURCES
-    ${PROJECT_SOURCE_DIR}/include/imgui/imgui.cpp
-    ${PROJECT_SOURCE_DIR}/include/imgui/imgui_demo.cpp
-    ${PROJECT_SOURCE_DIR}/include/imgui/imgui_draw.cpp
-    ${PROJECT_SOURCE_DIR}/include/imgui/imgui_tables.cpp
-    ${PROJECT_SOURCE_DIR}/include/imgui/imgui_widgets.cpp
-    ${PROJECT_SOURCE_DIR}/include/imgui/backends/imgui_impl_metal.mm
+        ${PROJECT_SOURCE_DIR}/include/imgui/imgui.cpp
+        ${PROJECT_SOURCE_DIR}/include/imgui/imgui_demo.cpp
+        ${PROJECT_SOURCE_DIR}/include/imgui/imgui_draw.cpp
+        ${PROJECT_SOURCE_DIR}/include/imgui/imgui_tables.cpp
+        ${PROJECT_SOURCE_DIR}/include/imgui/imgui_widgets.cpp
+        ${PROJECT_SOURCE_DIR}/include/imgui/backends/imgui_impl_metal.mm
 )
 
 # Create executable
@@ -85,3 +85,10 @@ add_custom_command(TARGET pathtracer POST_BUILD
         $<TARGET_FILE_DIR:pathtracer>/default.metallib
         COMMENT "Copying Metal library to output directory"
 )
+
+# include objects in the binary
+add_custom_command(TARGET pathtracer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        $<TARGET_FILE_DIR:pathtracer>/assets
+        COMMENT "Copying assets into runtime folder")
