@@ -4,61 +4,54 @@
 #pragma once
 
 #include <chrono>
-#include <numbers>
 #include <simd/simd.h>
 #include <unordered_map>
+#include <mutex>
 
 class MovementHandler {
 public:
     MovementHandler();
 
-    void resetCamera() {
-        _camPos = {0, 1, 3};
-        _yaw = std::numbers::pi_v<float>;
-        _pitch = 0.0f;
-        _velocity = {0, 0, 0};
-        _moved = false;
-    }
-
+    // Call from input/event thread:
     void keyDown(uint16_t key);
 
     void keyUp(uint16_t key);
 
     void mouseMove(double dx, double dy);
 
-    std::chrono::high_resolution_clock::time_point lastInteraction{std::chrono::high_resolution_clock::now()};
+    // Reset camera to initial pose (thread-safe)
+    void resetCamera();
 
-    // Call once per frame with elapsed seconds
+    // Threaded updater: call periodically with elapsed seconds
     void update(float dt);
 
-    bool hasMoved() const {
-        return _moved;
-    }
+    // Thread-safe accessors for camera state
+    simd::float3 getPosition();
 
-    void resetMoved() {
-        _moved = false;
-    }
+    float getYaw();
 
-    // Accessors for camera state
-    simd::float3 position() const { return _camPos; }
-    float yaw() const { return _yaw; }
-    float pitch() const { return _pitch; }
+    float getPitch();
+
+    // Check if camera moved since last read, then clear flag
+    bool hasMovedAndClear();
+
+    std::chrono::high_resolution_clock::time_point lastInteraction;
 
 private:
-    std::unordered_map<uint16_t, bool> _keys;
+    mutable std::mutex _mtx;
     simd::float3 _camPos;
     float _yaw;
     float _pitch;
     simd::float3 _velocity;
+    std::unordered_map<uint16_t, bool> _keys;
     bool _moved = false;
 
     // tuning parameters
-    const float _accel = 50.0f; // world‐units per second²
-    const float _damp = 8.0f; // damping per second
-    const float _sens = 0.002f; // radians per pixel
+    static constexpr float _accel = 50.0f; // world-units per second^2
+    static constexpr float _damp = 8.0f; // damping per second
+    static constexpr float _sens = 0.002f; // radians per pixel
 
     static constexpr auto kInteractionCooldown = std::chrono::milliseconds(100);
 };
 
-
-#endif //MOVEMENTHANDLER_H
+#endif // MOVEMENTHANDLER_H

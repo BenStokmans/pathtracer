@@ -37,10 +37,7 @@ static CVReturn DisplayLinkCallback( CVDisplayLinkRef dl,
                                      void* userInfo )
 {
     @autoreleasepool {
-        // draw on the main queue—dispatch back if needed
-        dispatch_async(dispatch_get_main_queue(), ^{
-            gRenderer->draw(gLayer);
-        });
+        gRenderer->draw(gLayer);
     }
     return kCVReturnSuccess;
 }

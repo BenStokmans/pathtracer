@@ -95,23 +95,17 @@ void Renderer::draw(CA::MetalLayer *layer) {
 
     // compute delta‐time
     auto now = std::chrono::high_resolution_clock::now();
-    const float dt = std::chrono::duration<float>(now - _lastUpdate).count();
     _lastUpdate = now;
 
-    // update camera
-    _move.update(dt);
-    _camPos = _move.position();
-    _yaw = _move.yaw();
-    _pitch = _move.pitch();
+    // read whatever the movement thread last produced:
+    _camPos = _move.getPosition();
+    _yaw = _move.getYaw();
+    _pitch = _move.getPitch();
 
-    if (_move.hasMoved()) {
+    // if the camera moved since last frame, reset accumulation:
+    if (_move.hasMovedAndClear()) {
         clearAccumulation();
-        _move.resetMoved();
     }
-
-    // reset accumulation if moving
-    if (simd::length(_move.position() - _camPos) > 1e-5f)
-        clearAccumulation();
 
     // get a drawable for this frame
     const auto drawable = layer->nextDrawable();
