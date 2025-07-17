@@ -5,7 +5,8 @@
 static constexpr float PI_2 = 1.57079632679f;
 
 MovementHandler::MovementHandler()
-    : _camPos{0, 1, 12}, _yaw(std::numbers::pi_v<float>), _pitch(0), _velocity{0, 0, 0} {
+    : _camPos{-2, 3, 6}, _yaw(std::numbers::pi_v<float> * 11 / 12), _pitch(-std::numbers::pi_v<float> * 1 / 12),
+      _velocity{0, 0, 0} {
 }
 
 void MovementHandler::keyDown(const uint16_t key) {

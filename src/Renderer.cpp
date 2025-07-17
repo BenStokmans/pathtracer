@@ -258,24 +258,45 @@ void Renderer::setupScene() {
     //  2) GEOMETRY
     //
     //  a) Ceiling “light panel” as two triangles (mat 0)
-    constexpr float yL = 1.9f; // just below the ceiling
-    constexpr float x0 = -0.5f;
-    constexpr float x1 = 0.5f;
+    constexpr float yL = 4.99f; // just below the ceiling
+    constexpr float x0 = -2.0f;
+    constexpr float x1 = 2.0f;
     constexpr float z0 = -2.0f;
     constexpr float z1 = -1.0f;
     triangles.push_back({{x0, yL, z0}, {x1, yL, z0}, {x1, yL, z1}, 0});
     triangles.push_back({{x1, yL, z1}, {x0, yL, z1}, {x0, yL, z0}, 0});
 
     //  b) Spheres (mat 2:red, 4:mirror, 5:glass, 3:green)
-    using Sph = Sphere;
-    const std::vector<Sph> sphs = {
-        {{-0.6f, 0.25f, -0.1f}, 0.25f, 2}, // small red
-        {{0.0f, 0.25f, -0.2f}, 0.25f, 4}, // mirror
-        {{0.6f, 0.25f, -0.3f}, 0.25f, 5}, // glass
-        {{0.0f, 0.9f, -0.2f}, 0.25f, 3} // green
-    };
+    // using Sph = Sphere;
+    // const std::vector<Sph> sphs = {
+    //     {{-0.6f, 0.25f, -0.1f}, 0.25f, 2}, // small red
+    //     {{0.0f, 0.25f, -0.2f}, 0.25f, 4}, // mirror
+    //     {{0.6f, 0.25f, -0.3f}, 0.25f, 5}, // glass
+    //     {{0.0f, 0.9f, -0.2f}, 0.25f, 3} // green
+    // };
+    // _sphereCount = static_cast<uint32_t>(sphs.size());
+    // _sphereBuffer = _device->newBuffer(
+    //     sphs.data(),
+    //     sphs.size() * sizeof(Sph),
+    //     MTL::ResourceStorageModeShared
+    // );
 
-    ObjLoader::loadObj("assets/teapot.obj", 0);
+    // Load teapot with blue material and center it on the floor
+    size_t teapotTriStart = triangles.size();
+    ObjLoader::loadObj("assets/teapot.obj", 4);
+    const simd::float3 bbMin = {-3.0f, 0.0f, -2.0f};
+    const simd::float3 bbMax = {3.43400002f, 3.1500001f, 2.0f};
+    const simd::float3 translation = {
+        -(bbMin.x + bbMax.x) * 0.5f,
+        -bbMin.y,
+        -(bbMin.z + bbMax.z) * 0.5f
+    };
+    size_t teapotTriEnd = triangles.size();
+    for (size_t i = teapotTriStart; i < teapotTriEnd; ++i) {
+        triangles[i].v0 += translation;
+        triangles[i].v1 += translation;
+        triangles[i].v2 += translation;
+    }
     // ObjLoader::loadObj("assets/cube.obj", 0);
 
     //  c) Walls & floor & back (infinite planes, mat 1)
@@ -283,34 +304,17 @@ void Renderer::setupScene() {
     const std::vector<Pln> plns = {
         // normal         d        matIndex
         {{0, 1, 0}, 0.0f, 2}, // floor y=0
-        {{0, -1, 0}, 2.0f, 1}, // ceiling y=2
-        {{1, 0, 0}, 2.0f, 1}, // left  x=-2
-        {{-1, 0, 0}, 2.0f, 1}, // right x= 2
-        {{0, 0, 1}, 3.0f, 1} // back  z=-3
+        {{0, -1, 0}, 5.0f, 1}, // ceiling y=2
+        {{1, 0, 0}, 5.0f, 1}, // left  x=-2
+        {{-1, 0, 0}, 5.0f, 1}, // right x= 2
+        {{0, 0, 1}, 4.0f, 1} // back  z=-3
     };
-
-    // upload
-    _triangleCount = static_cast<uint32_t>(triangles.size());
-    // _planeCount = static_cast<uint32_t>(plns.size());
-    // _sphereCount = static_cast<uint32_t>(sphs.size());
-
-    _triangleBuffer = _device->newBuffer(
-        triangles.size() * sizeof(Triangle),
+    _planeCount = static_cast<uint32_t>(plns.size());
+    _planeBuffer = _device->newBuffer(
+        plns.data(),
+        plns.size() * sizeof(Pln),
         MTL::ResourceStorageModeShared
     );
-    memcpy(_triangleBuffer->contents(), triangles.data(), triangles.size() * sizeof(Triangle));
-
-    // _planeBuffer = _device->newBuffer(
-    //     plns.size() * sizeof(Pln),
-    //     MTL::ResourceStorageModeShared
-    // );
-    // memcpy(_planeBuffer->contents(), plns.data(), plns.size() * sizeof(Pln));
-    //
-    // _sphereBuffer = _device->newBuffer(
-    //     sphs.size() * sizeof(Sph),
-    //     MTL::ResourceStorageModeShared
-    // );
-    // memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size() * sizeof(Sph));
 
     std::vector<BVHNode> bvhNodes;
     bvhNodes.reserve(triangles.size() * 2); // safe upper bound
@@ -319,15 +323,29 @@ void Renderer::setupScene() {
 
     BvhBuilder::buildBVH(0, (int) triangles.size(), triangles, bvhNodes, triIndices);
 
-    // export the bvh
-    BvhBuilder::exportBVHWireframeOBJ(bvhNodes, "bvh_wireframe.obj");
+    struct SceneTriangle {
+        simd::float3 v0, v1, v2;
+        uint matIndex;
+    };
+    std::vector<SceneTriangle> sceneTris;
+    sceneTris.reserve(triangles.size());
+    for (int triIndex: triIndices) {
+        const auto &T = triangles[triIndex];
+        sceneTris.emplace_back(T.v0, T.v1, T.v2, T.matIndex);
+    }
 
-    // create Metal buffer
+    _triangleBuffer = _device->newBuffer(
+        sceneTris.data(),
+        sceneTris.size() * sizeof(SceneTriangle),
+        MTL::ResourceStorageModeShared
+    );
+    _triangleCount = static_cast<uint32_t>(sceneTris.size());
+
     _bvhNodeBuffer = _device->newBuffer(
+        bvhNodes.data(),
         bvhNodes.size() * sizeof(BVHNode),
         MTL::ResourceStorageModeShared
     );
-    memcpy(_bvhNodeBuffer->contents(), bvhNodes.data(), bvhNodes.size() * sizeof(BVHNode));
     _bvhNodeCount = static_cast<uint32_t>(bvhNodes.size());
 }
 
