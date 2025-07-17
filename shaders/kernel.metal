@@ -29,16 +29,20 @@ kernel void path_trace(
     uint W = outTex.get_width(), H = outTex.get_height();
     if (gid.x>=W || gid.y>=H) return;
 
-    // seed RNG per‐pixel+frame
+// seed RNG per‐pixel+frame
     thread uint st = gid.x + gid.y*W + frameIndex*1973;
 
-    // initialize ray & throughput
-    float u = (float(gid.x) + rand01(st))/float(W);
-    float v = 1.0 - (float(gid.y) + rand01(st))/float(H);
+    // generate a tiny random offset in [0,1) for AA
+    float dx = rand01(st);
+    float dy = rand01(st);
+
+    // initialize primary ray with jittered uv inside pixel
+    float u = (float(gid.x) + dx) / float(W);
+    float v = 1.0 - (float(gid.y) + dy) / float(H);
+
     Ray ray;
     ray.origin = cam.origin;
     ray.dir    = normalize(cam.lowerLeft + u*cam.horizontal + v*cam.vertical - cam.origin);
-    // inside your path_trace, before the bounce loop:
     float3 throughput = float3(1.0);
     float3 L = float3(0.0);
 
@@ -47,17 +51,6 @@ kernel void path_trace(
         float  bestT   = 1e20;
         float3 bestN   = float3(0.0);
         uint   bestMat  = 0;
-
-//        // Triangles
-//        for (uint i = 0; i < triCount; ++i) {
-//            float3 nTmp;
-//            float  t = intersectTriangle(triangles[i], ray, nTmp);
-//            if (t > 0.0 && t < bestT) {
-//                bestT   = t;
-//                bestN   = nTmp;
-//                bestMat = triangles[i].matIndex;
-//            }
-//        }
 
         int stack[MAX_STACK_DEPTH];
         int  sp = 0;
@@ -68,10 +61,8 @@ kernel void path_trace(
             BVHNode node = bvhNodes[ni];
             if (!intersectAABB(node.bboxMin, node.bboxMax, ray)) continue;
             if (node.count > 0) {
-                // leaf
                 int start = node.leftFirst;
                 for (uint i=0; i<node.count; ++i) {
-                    // intersect triangle triIndices[start+i]
                     float3 nTmp;
                     float  t = intersectTriangle(triangles[start+i], ray, nTmp);
                     if (t > 0.0 && t < bestT) {
@@ -90,7 +81,6 @@ kernel void path_trace(
             }
         }
 
-        // Planes
         for (uint i = 0; i < planeCount; ++i) {
             float3 nTmp;
             float  t = intersectPlane(planes[i], ray, nTmp);
@@ -197,7 +187,6 @@ struct VSOut {
 // emit a full‐screen strip plus proper UVs
 vertex VSOut quad_vert(uint vid [[vertex_id]]) {
     constexpr float2 pts[4] = { {-1,-1}, { 1,-1}, {-1, 1}, { 1, 1} };
-    // we want (0,0) at top-left, (1,1) at bottom-right
     constexpr float2 uvs[4]  = { {0,1}, {1,1}, {0,0}, {1,0} };
     VSOut out;
     out.position = float4(pts[vid], 0, 1);
@@ -209,6 +198,6 @@ fragment float4 quad_frag(VSOut in    [[stage_in]],
                           texture2d<float> src [[texture(0)]],
                           sampler           smp [[sampler(0)]]) {
     float3 hdr = src.sample(smp, in.uv).xyz;
-    float3 ldr = sqrt(hdr);   // gamma ≈2
+    float3 ldr = sqrt(hdr);
     return float4(ldr, 1);
 }
