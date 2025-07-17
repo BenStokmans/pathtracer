@@ -33,6 +33,8 @@ private:
     uint32_t _sphereCount{};
     MTL::Buffer *_materialBuffer{};
     uint32_t _materialCount{};
+    MTL::Buffer *_bvhNodeBuffer{};
+    uint32_t _bvhNodeCount{};
 
     std::vector<MTL::Texture *> _textures;
 

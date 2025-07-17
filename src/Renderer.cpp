@@ -5,6 +5,7 @@
 #include "Config.h"
 #include <vector>
 #include <numbers>
+#include <numeric>
 
 #include "Camera.h"
 #include "Material.h"
@@ -13,6 +14,8 @@
 #include "imgui_impl_metal.h"
 #include "Object.h"
 #include "ObjLoader.h"
+#include "Bvh/BvhBuilder.h"
+#include "Bvh/BvhNode.h"
 
 // Forward declaration for window helper function
 extern "C" bool isImGuiWindowVisible();
@@ -132,6 +135,9 @@ void Renderer::draw(CA::MetalLayer *layer) {
 
     encoder->setBuffer(_materialBuffer, 0, 8);
     encoder->setBytes(&_materialCount, sizeof(_materialCount), 9);
+
+    encoder->setBuffer(_bvhNodeBuffer, 0, 11);
+    encoder->setBytes(&_bvhNodeCount, sizeof(_bvhNodeCount), 12);
 
     constexpr float aspect = static_cast<float>(WINDOW_WIDTH) / WINDOW_HEIGHT;
     const float theta = _fov * (std::numbers::pi_v<float> / 180.0f);
@@ -269,7 +275,8 @@ void Renderer::setupScene() {
         {{0.0f, 0.9f, -0.2f}, 0.25f, 3} // green
     };
 
-    ObjLoader::loadObj("assets/cube.obj", 6);
+    ObjLoader::loadObj("assets/teapot.obj", 0);
+    // ObjLoader::loadObj("assets/cube.obj", 0);
 
     //  c) Walls & floor & back (infinite planes, mat 1)
     using Pln = Plane;
@@ -284,8 +291,8 @@ void Renderer::setupScene() {
 
     // upload
     _triangleCount = static_cast<uint32_t>(triangles.size());
-    _planeCount = static_cast<uint32_t>(plns.size());
-    _sphereCount = static_cast<uint32_t>(sphs.size());
+    // _planeCount = static_cast<uint32_t>(plns.size());
+    // _sphereCount = static_cast<uint32_t>(sphs.size());
 
     _triangleBuffer = _device->newBuffer(
         triangles.size() * sizeof(Triangle),
@@ -293,17 +300,35 @@ void Renderer::setupScene() {
     );
     memcpy(_triangleBuffer->contents(), triangles.data(), triangles.size() * sizeof(Triangle));
 
-    _planeBuffer = _device->newBuffer(
-        plns.size() * sizeof(Pln),
-        MTL::ResourceStorageModeShared
-    );
-    memcpy(_planeBuffer->contents(), plns.data(), plns.size() * sizeof(Pln));
+    // _planeBuffer = _device->newBuffer(
+    //     plns.size() * sizeof(Pln),
+    //     MTL::ResourceStorageModeShared
+    // );
+    // memcpy(_planeBuffer->contents(), plns.data(), plns.size() * sizeof(Pln));
+    //
+    // _sphereBuffer = _device->newBuffer(
+    //     sphs.size() * sizeof(Sph),
+    //     MTL::ResourceStorageModeShared
+    // );
+    // memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size() * sizeof(Sph));
 
-    _sphereBuffer = _device->newBuffer(
-        sphs.size() * sizeof(Sph),
+    std::vector<BVHNode> bvhNodes;
+    bvhNodes.reserve(triangles.size() * 2); // safe upper bound
+    std::vector<int> triIndices(triangles.size());
+    std::iota(triIndices.begin(), triIndices.end(), 0);
+
+    BvhBuilder::buildBVH(0, (int) triangles.size(), triangles, bvhNodes, triIndices);
+
+    // export the bvh
+    BvhBuilder::exportBVHWireframeOBJ(bvhNodes, "bvh_wireframe.obj");
+
+    // create Metal buffer
+    _bvhNodeBuffer = _device->newBuffer(
+        bvhNodes.size() * sizeof(BVHNode),
         MTL::ResourceStorageModeShared
     );
-    memcpy(_sphereBuffer->contents(), sphs.data(), sphs.size() * sizeof(Sph));
+    memcpy(_bvhNodeBuffer->contents(), bvhNodes.data(), bvhNodes.size() * sizeof(BVHNode));
+    _bvhNodeCount = static_cast<uint32_t>(bvhNodes.size());
 }
 
 

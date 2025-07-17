@@ -15,3 +15,11 @@ struct Material {
 struct SceneTriangle { float3 v0, v1, v2; uint matIndex; };
 struct ScenePlane    { float3 normal; float  d;   uint matIndex; };
 struct SceneSphere   { float3 center; float  radius; uint matIndex; };
+
+struct BVHNode {
+    float3 bboxMin;
+    float3 bboxMax;
+    uint  leftFirst;
+    uint rightFirst;
+    uint  count;
+};

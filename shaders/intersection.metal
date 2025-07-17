@@ -46,3 +46,13 @@ inline float intersectSphere(const SceneSphere sp, Ray r,
     outN   = normalize(P - sp.center);
     return t;
 }
+
+inline bool intersectAABB(float3 mn, float3 mx, Ray r) {
+    float3 inv = 1.0 / r.dir;
+    float3 t0  = (mn - r.origin) * inv;
+    float3 t1  = (mx - r.origin) * inv;
+    float3 tmin = min(t0, t1), tmax = max(t0, t1);
+    float tnear = max(max(tmin.x, tmin.y), tmin.z);
+    float tfar  = min(min(tmax.x, tmax.y), tmax.z);
+    return tfar >= max(tnear, 0.0);
+}

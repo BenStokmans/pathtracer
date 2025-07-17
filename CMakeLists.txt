@@ -48,14 +48,8 @@ target_link_libraries(pathtracer PRIVATE
 # shader directory
 set(SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 
-# list all of your .metal files here so CMake knows to re‐run if any of them change
-set(SHADERS
-        ${SHADER_DIR}/Types.metal
-        ${SHADER_DIR}/RNG.metal
-        ${SHADER_DIR}/BSDF.metal
-        ${SHADER_DIR}/Intersection.metal
-        ${SHADER_DIR}/Kernel.metal
-)
+# Include all the *.metal files from the shaders directory
+file(GLOB_RECURSE SHADERS ${SHADER_DIR}/*.metal)
 
 # where to put the compiled library
 set(METAL_LIBRARY_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/default.metallib)

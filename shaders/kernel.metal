@@ -7,6 +7,7 @@
 using namespace metal;
 
 // maximum bounces per sample
+#define MAX_STACK_DEPTH 32
 #define MAX_BOUNCES 20
 
 kernel void path_trace(
@@ -21,6 +22,8 @@ kernel void path_trace(
     device const Material                *materials [[buffer(8)]],
     constant uint                        &matCount  [[buffer(9)]],
     constant Camera                      &cam        [[ buffer(10) ]],
+    device const BVHNode                 *bvhNodes     [[buffer(11)]],
+    constant uint                        &bvhNodeCount [[buffer(12)]],
     uint2                                gid       [[thread_position_in_grid]]
 ) {
     uint W = outTex.get_width(), H = outTex.get_height();
@@ -45,14 +48,45 @@ kernel void path_trace(
         float3 bestN   = float3(0.0);
         uint   bestMat  = 0;
 
-        // Triangles
-        for (uint i = 0; i < triCount; ++i) {
-            float3 nTmp;
-            float  t = intersectTriangle(triangles[i], ray, nTmp);
-            if (t > 0.0 && t < bestT) {
-                bestT   = t;
-                bestN   = nTmp;
-                bestMat = triangles[i].matIndex;
+//        // Triangles
+//        for (uint i = 0; i < triCount; ++i) {
+//            float3 nTmp;
+//            float  t = intersectTriangle(triangles[i], ray, nTmp);
+//            if (t > 0.0 && t < bestT) {
+//                bestT   = t;
+//                bestN   = nTmp;
+//                bestMat = triangles[i].matIndex;
+//            }
+//        }
+
+        int stack[MAX_STACK_DEPTH];
+        int  sp = 0;
+        stack[sp++] = 0; // root node
+
+        while (sp > 0) {
+            int ni = stack[--sp];
+            BVHNode node = bvhNodes[ni];
+            if (!intersectAABB(node.bboxMin, node.bboxMax, ray)) continue;
+            if (node.count > 0) {
+                // leaf
+                int start = node.leftFirst;
+                for (uint i=0; i<node.count; ++i) {
+                    // intersect triangle triIndices[start+i]
+                    float3 nTmp;
+                    float  t = intersectTriangle(triangles[start+i], ray, nTmp);
+                    if (t > 0.0 && t < bestT) {
+                        bestT   = t;
+                        bestN   = nTmp;
+                        bestMat = triangles[start+i].matIndex;
+                    }
+                }
+            } else {
+                int left  = node.leftFirst;
+                int right = node.rightFirst;
+                if (sp + 2 <= MAX_STACK_DEPTH) {
+                    stack[sp++] = left;
+                    stack[sp++] = right;
+                }
             }
         }
 
